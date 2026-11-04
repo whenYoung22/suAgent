@@ -1,0 +1,20 @@
+{
+  "name": "@suagent/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/agent-events.js",
+  "types": "./dist/agent-events.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/agent-events.d.ts",
+      "import": "./dist/agent-events.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  }
+}
