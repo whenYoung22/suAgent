@@ -209,7 +209,7 @@ server/src/scenarios/
 
 ## 4. 下一步：SSE 推送模块
 
-接下来进入 `server/src/lib/sse.ts`。
+接下来进入 `server/src/lib/sseSender.ts`。
 
 这里我们要解决三个问题：
 

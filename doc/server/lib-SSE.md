@@ -1,4 +1,4 @@
-现在实现 `server/src/lib/sse.ts`。
+现在实现 `server/src/lib/sseSender.ts`。
 
 这个模块是后端的 SSE 传输工具层。它不关心 Agent 做了什么，也不关心当前使用哪个 Scenario，只负责把 `AgentEvent` 转换成 SSE 格式，并通过 Express 的 Response 推送给客户端。
 
@@ -47,12 +47,12 @@ field: value
 
 因为我们的 JSON 对象本身已经有 `type` 字段，可以区分 `thinking`、`tool_call` 等事件。没必要重复定义事件名称。
 
-## 2. 编写 sse.ts
+## 2. 编写 sseSender.ts
 
 创建：
 
 ```
-server/src/lib/sse.ts
+server/src/lib/sseSender.ts
 ```
 
 写入以下代码：
@@ -216,7 +216,7 @@ if (res.writableEnded || res.destroyed) {
 现在我们已经有了两块独立的能力：
 
 + `scenarios/`：提供预设的 `AgentEvent[]`。
-+ `lib/sse.ts`：负责将 `AgentEvent` 推送给客户端。
++ `lib/sseSender.ts`：负责将 `AgentEvent` 推送给客户端。
 
 接下来需要一个中间层把它们连接起来：
 

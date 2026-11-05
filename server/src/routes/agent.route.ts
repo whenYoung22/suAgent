@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import type { AgentEvent } from "@suagent/shared";
 
-import { initSSE, sendSSE, endSSE } from "../lib/sse.js";
+import { initSSE, sendSSE, endSSE } from "../lib/sseSender.js";
 
 import { singleToolCallScenario } from "../scenarios/single-tool-call.js";
 import { multiToolCallScenario } from "../scenarios/multi-tool-call.js";

@@ -2,7 +2,7 @@ import type { Response } from "express";
 import type { AgentEvent } from "@suagent/shared";
 
 /**
- * 初始化 SSE 响应
+ * 初始化 SSE 响应；此处只发送响应头，因此需要 flushHeaders()
  */
 export function initSSE(res: Response): void {
   res.status(200);

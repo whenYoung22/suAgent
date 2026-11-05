@@ -1,8 +1,8 @@
 # suAgent
 
-suAgent 是一个基于 React ,Express和 TypeScript 构建的 Agent 流式交互工作台，用于可视化 Agent 工具调用全过程、并支持用户随时中断的流式交互前端。
+suAgent 是一个基于 React、Express 和 TypeScript 构建的 Agent 流式交互工作台，用于可视化 Agent 工具调用全过程，并支持用户随时中断流式交互。
 
-通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理运行状态，实现工具调用过程可视化、流式 Markdown 渲染、异步请求中断及异常处理。
+当前前端 MVP 通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理整轮运行状态与消息/工具调用数据，支持预设场景调试、纯文本流式回答、请求中断及异常处理。Markdown 和代码高亮暂不在 MVP 范围内。
 
 
 
@@ -13,7 +13,7 @@ suAgent/
 │       ├── api/              # HTTP 请求（fetch 发起 SSE 的薄封装）
 │       ├── assets/
 │       ├── components/       # ThinkingBubble、ToolCallCard、StreamingAnswer、StopButton
-│       ├── hooks/            # useAgentStream（SSE 消费核心）
+│       ├── hooks/            # useAgentStream（SSE 消费与中断控制）
 │       ├── pages/            # ChatPage 等
 │       ├── stores/           # agentStore（Zustand 状态机）
 │       ├── clientTypes/      # 前端 UI 专用类型
@@ -23,8 +23,8 @@ suAgent/
 │
 ├── server/
 │   └── src/
-│       ├── lib/              # sse.ts（res.write 封装、事件格式化）
-│       ├── routes/           # agent.ts（/api/agent/stream）
+│       ├── lib/              # sseSender.ts（SSE 响应生命周期与事件推送）
+│       ├── routes/           # agent.route.ts（/api/agent/run）
 │       ├── scenarios/        # 预设事件序列：singleToolCall、multiToolCall、toolFailure、streamError
 │       ├── app.ts            # 创建 Express 应用
 │       └── server.ts         # 启动 HTTP 服务
@@ -46,8 +46,9 @@ suAgent/
 - **Agent 状态机**：以 Zustand 管理 `IDLE / THINKING / CALLING_TOOL / DONE / ERROR / INTERRUPTED` 状态迁移
 - **工具调用卡片**：每个工具调用渲染为独立卡片，展示工具名、参数、耗时与结果，通过 `callId` 关联调用与结果
 - **用户中断**：通过 `AbortController` 终止流式响应，区分用户中断与流级错误，中断后保留已生成内容
-- **增量渲染**：最终回答按 `token` 事件逐字追加，结合 React 19 的 `useTransition` 控制渲染优先级
+- **增量渲染**：最终回答按 `token` 事件逐段追加
 - **错误局部化**：工具调用失败时卡片内降级提示，不阻塞整个对话流
+- **调试场景**：可在单次工具调用、连续工具调用、工具失败和流错误场景间切换
 
 ## 技术栈
 
@@ -67,7 +68,7 @@ suAgent/
 用户输入
    │
    ▼
-React 前端 ──── fetch /api/agent/stream ────▶ Express 后端
+React 前端 ──── fetch POST /api/agent/run ──▶ Express 后端
    │                                              │
    │◀────────── SSE 事件流 ──────────────────────┘
    │
@@ -92,8 +93,8 @@ ReadableStream Reader ──▶ TextDecoder ──▶ 缓冲区按 \n\n 切帧
 | 事件          | `data` 内容                  | 前端动作                              |
 | ------------- | ---------------------------- | ------------------------------------- |
 | `thinking`    | 思考片段文本                 | 状态切到 `THINKING`，渲染思考气泡     |
-| `tool_call`   | `{ tool, args, callId }`     | 状态切到 `CALLING_TOOL`，插入工具卡片 |
-| `tool_result` | `{ callId, result, error? }` | 按 `callId` 更新对应卡片              |
+| `tool_call`   | `{ toolCallId, toolName, arguments }` | 状态切到 `CALLING_TOOL`，插入工具卡片 |
+| `tool_result` | `{ toolCallId, success, result?, error? }` | 按 `toolCallId` 更新对应卡片 |
 | `token`       | 最终回答增量文本             | 追加渲染                              |
 | `done`        | `{}`                         | 状态切到 `DONE`，清理连接             |
 | `error`       | `{ message }`                | 状态切到 `ERROR`，展示可重试提示      |
@@ -142,7 +143,7 @@ npm install
 npm run dev
 ```
 
-前端默认运行在 `http://localhost:5173`，后端默认 `http://localhost:3001`。前端通过环境变量 `VITE_API_BASE_URL` 指向后端地址。
+前端默认运行在 `http://localhost:5173`，后端默认 `http://localhost:3000`。Vite 开发服务器会将 `/api` 请求代理到后端；如需跨域直连其他后端，可通过 `VITE_API_BASE_URL` 配置 API 基地址。
 
 ## 开发阶段
 

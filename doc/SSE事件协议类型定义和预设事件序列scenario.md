@@ -136,7 +136,7 @@ server/scenarios/*.ts
 server/routes/agent.ts
         │
         ↓
-server/lib/sse.ts
+server/lib/sseSender.ts
         │ SSE 推送
         ↓
 client/hooks/useAgentStream.ts
@@ -178,7 +178,7 @@ const events: AgentEvent[] = [
 ];
 ```
 
-真正把事件转换成 SSE 格式的工作交给 `server/lib/sse.ts`。
+真正把事件转换成 SSE 格式的工作交给 `server/lib/sseSender.ts`。
 
 ## 4. 接下来应该怎么做？
 
