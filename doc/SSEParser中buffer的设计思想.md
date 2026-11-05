@@ -97,3 +97,23 @@ class ByteBuffer {
 - 换个数据类型(字节数组)、换个边界(`\n`、长度前缀),思想照用,拼串可能就不存在了。
 
 **一句话:实现是拼串,思想是"暂存不完整、按边界消费"。前者是这段代码的写法,后者是流式解析的通用模式。**
+
+
+
+
+
+# parser的完整流程
+
+```
+chunk
+  │  ① SSEParser.push：buffer += chunk，按 \n\n 切
+  ▼
+frame（完整 SSE 帧文本，如 `data: {"type":"token",...}`）
+  │  ② parseFrame：只取 data: 行，剥掉 "data: " 前缀，多行 join
+  ▼
+payload（纯 JSON 字符串，如 `{"type":"token",...}`）
+  │  ③ parseAgentEvent：JSON.parse → isRecord → switch(value.type)
+  ▼
+AgentEvent（判断出类型并校验重建）
+```
+
