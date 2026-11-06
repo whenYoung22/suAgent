@@ -17,7 +17,7 @@ export interface ToolCall {
 
 export interface ChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'agent'
   content: string
   thinking: string
   toolCalls: ToolCall[]

@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/agent-events.d.ts",
       "import": "./dist/agent-events.js"
+    },
+    "./session": {
+      "types": "./dist/session.d.ts",
+      "import": "./dist/session.js"
     }
   },
   "scripts": {

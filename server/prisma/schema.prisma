@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum AgentRunStatus {
+  running
+  completed
+  interrupted
+  failed
+}
+
+enum MessageRole {
+  user
+  agent
+}
+
+enum ToolCallStatus {
+  running
+  succeeded
+  failed
+}
+
+model Session {
+  id              String   @id @default(uuid()) @db.Char(36)
+  title           String   @default("新会话") @db.VarChar(120)
+  createdAt       DateTime @default(now()) @db.DateTime(3)
+  lastActivityAt  DateTime @default(now()) @db.DateTime(3)
+  lastRunSequence Int      @default(0)
+
+  runs AgentRun[]
+
+  @@index([lastActivityAt])
+}
+
+model AgentRun {
+  id           String         @id @default(uuid()) @db.Char(36)
+  sessionId    String         @db.Char(36)
+  sequence     Int
+  status       AgentRunStatus @default(running)
+  scenario     String         @db.VarChar(64)
+  startedAt    DateTime       @default(now()) @db.DateTime(3)
+  finishedAt   DateTime?      @db.DateTime(3)
+  errorCode    String?        @db.VarChar(64)
+  errorMessage String?        @db.Text
+
+  session   Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  messages  Message[]
+  toolCalls ToolCall[]
+
+  @@unique([sessionId, sequence])
+}
+
+model Message {
+  id        String      @id @default(uuid()) @db.Char(36)
+  runId     String      @db.Char(36)
+  role      MessageRole
+  content   String      @db.LongText
+  thinking  String?     @db.LongText
+  createdAt DateTime    @default(now()) @db.DateTime(3)
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, role])
+}
+
+model ToolCall {
+  id           String         @id @default(uuid()) @db.Char(36)
+  runId        String         @db.Char(36)
+  toolCallId   String         @db.VarChar(128)
+  sequence     Int
+  toolName     String         @db.VarChar(128)
+  status       ToolCallStatus @default(running)
+  arguments    Json
+  result       Json?
+  errorMessage String?        @db.Text
+  startedAt    DateTime       @default(now()) @db.DateTime(3)
+  finishedAt   DateTime?      @db.DateTime(3)
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, toolCallId])
+  @@unique([runId, sequence])
+}
