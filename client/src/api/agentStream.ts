@@ -1,33 +1,39 @@
 // 用 fetch 发起 POST,拿到流式响应
 // 边读边解析成 AgentEvent,通过 onEvent 逐条回调,并保证"要么收到终止事件,要么抛错"。
 
-import type { AgentEventHandler, AgentScenario } from '../clientTypes/agent'
+import type { AgentEventHandler } from '../clientTypes/agent'
 import { SSEParser } from '../utils/sseParser'
+import { apiUrl, getResponseError } from './http'
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
-
-export async function runAgentScenario(
-  scenario: AgentScenario,  // 选哪个场景
+export async function runSession(
+  sessionId: string,
+  prompt: string,
   signal: AbortSignal,  // 外部取消信号
   onEvent: AgentEventHandler,   // 每解析出一个事件就回调
-): Promise<void> {
-  const response = await fetch(`${apiBaseUrl}/api/agent/run`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scenario }),
-    signal,
-  })
+  onRunId?: (runId: string) => void,
+): Promise<string> {
+  const response = await fetch(
+    apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/runs`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+      signal,
+    },
+  )
 
   // 两层前置校验
   if (!response.ok) {
-    const details = await response.text()
-    throw new Error(
-      details || `Agent request failed with HTTP ${response.status}.`,
-    )
+    throw new Error(await getResponseError(response))
   }
   if (!response.body) {
     throw new Error('The server did not provide an event stream.')
   }
+  const runId = response.headers.get('X-Run-Id')
+  if (!runId) {
+    throw new Error('The server did not provide a run ID.')
+  }
+  onRunId?.(runId)
 
   // 读取三件套
   const reader = response.body.getReader()  // 字节流读取器
@@ -63,4 +69,5 @@ export async function runAgentScenario(
   if (!receivedTerminalEvent) {
     throw new Error('The event stream ended before the Agent completed.')
   }
+  return runId
 }

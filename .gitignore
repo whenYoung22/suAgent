@@ -25,5 +25,6 @@ yarn-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+.github/
 
 # 如果 client 和 server 有自己独立的 node_modules，这也是全局忽略的

@@ -6,6 +6,11 @@
 
 import { create } from 'zustand'
 import type { AgentEvent } from '@suagent/shared'
+import type {
+  SessionMessage,
+  SessionToolCall,
+} from '@suagent/shared/session'
+import { toToolCallStatus } from '../clientTypes/agent'
 import type { ChatMessage, RunStatus } from '../clientTypes/agent'
 
 interface AgentState {
@@ -13,6 +18,9 @@ interface AgentState {
   runError: string | null
   messages: ChatMessage[]
   activeAgentMessageId: string | null  //核心设计；用 id 定位比“位置”更稳：即使未来支持重排、并发多会话，也不会写错消息
+  loadSessionMessages: (messages: SessionMessage[]) => void
+  clearSession: () => void
+  setActiveRunId: (runId: string) => void
   beginRun: (prompt: string) => void
   handleEvent: (event: AgentEvent) => void
   interruptRun: () => void
@@ -30,12 +38,99 @@ function createMessage(role: ChatMessage['role'], content: string): ChatMessage 
   }
 }
 
+function toChatToolCall(tool: SessionToolCall): ChatMessage['toolCalls'][number] {
+  return {
+    toolCallId: tool.toolCallId,
+    toolName: tool.toolName,
+    arguments: tool.arguments,
+    status: toToolCallStatus(tool.status),
+    ...(tool.result === undefined ? {} : { result: tool.result }),
+    ...(tool.errorMessage === undefined ? {} : { error: tool.errorMessage }),
+  }
+}
+
+function toChatMessage(message: SessionMessage): ChatMessage {
+  if (message.role === 'user') {
+    return {
+      id: message.id,
+      runId: message.runId,
+      createdAt: message.createdAt,
+      role: 'user',
+      content: message.content,
+      thinking: '',
+      toolCalls: [],
+    }
+  }
+
+  return {
+    id: message.id,
+    runId: message.runId,
+    createdAt: message.createdAt,
+    role: 'agent',
+    content: message.content,
+    thinking: message.thinking,
+    toolCalls: message.toolCalls.map(toChatToolCall),
+    runStatus: message.runStatus,
+    error: message.error,
+  }
+}
+
+function toRunStatus(status: NonNullable<ChatMessage['runStatus']>): RunStatus {
+  switch (status) {
+    case 'running':
+      return 'thinking'
+    case 'completed':
+      return 'done'
+    case 'interrupted':
+      return 'interrupted'
+    case 'failed':
+      return 'error'
+  }
+}
+
 
 export const useAgentStore = create<AgentState>((set, get) => ({
   runStatus: 'idle',
   runError: null,
   messages: [],
   activeAgentMessageId: null,
+
+  loadSessionMessages: (sessionMessages) => {
+    const messages = sessionMessages.map(toChatMessage)
+    const latestAgent = [...messages].reverse().find((message) => message.role === 'agent')
+    set({
+      messages,
+      activeAgentMessageId: null,
+      runStatus: latestAgent?.runStatus ? toRunStatus(latestAgent.runStatus) : 'idle',
+      runError: null,
+    })
+  },
+
+  clearSession: () => {
+    set({
+      messages: [],
+      activeAgentMessageId: null,
+      runStatus: 'idle',
+      runError: null,
+    })
+  },
+
+  setActiveRunId: (runId) => {
+    const activeAgentMessageId = get().activeAgentMessageId
+    set((state) => {
+      const activeAgentIndex = state.messages.findIndex(
+        (message) => message.id === activeAgentMessageId,
+      )
+      return {
+        messages: state.messages.map((message, index) =>
+          message.id === activeAgentMessageId ||
+          (index === activeAgentIndex - 1 && message.role === 'user')
+            ? { ...message, runId }
+            : message,
+        ),
+      }
+    })
+  },
 
   // 开始一次运行
   beginRun: (prompt) => {
@@ -119,14 +214,31 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         }))
         break
       case 'done':
-        set({ runStatus: 'done', activeAgentMessageId: null })
+        set((state) => ({
+          runStatus: 'done',
+          activeAgentMessageId: null,
+          messages: state.messages.map((message) =>
+            message.id === activeAgentMessageId
+              ? { ...message, runStatus: 'completed' }
+              : message,
+          ),
+        }))
         break
       case 'error':
-        set({
+        set((state) => ({
           runStatus: 'error',
           runError: event.data.message,
           activeAgentMessageId: null,
-        })
+          messages: state.messages.map((message) =>
+            message.id === activeAgentMessageId
+              ? {
+                  ...message,
+                  runStatus: 'failed',
+                  error: { code: event.data.code, message: event.data.message },
+                }
+              : message,
+          ),
+        }))
         break
     }
   },
@@ -135,14 +247,33 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   // 两种非流内收尾
   interruptRun: () => {
     if (!get().activeAgentMessageId) return  // 无运行则忽略(幂等保护)
-    set({ runStatus: 'interrupted', activeAgentMessageId: null })
+    const activeAgentMessageId = get().activeAgentMessageId
+    set((state) => ({
+      runStatus: 'interrupted',
+      activeAgentMessageId: null,
+      messages: state.messages.map((message) =>
+        message.id === activeAgentMessageId
+          ? { ...message, runStatus: 'interrupted' }
+          : message,
+      ),
+    }))
   },
 
   failRun: (message) => {
-    set({
+    const activeAgentMessageId = get().activeAgentMessageId
+    set((state) => ({
       runStatus: 'error',
       runError: message,
       activeAgentMessageId: null,
-    })
+      messages: state.messages.map((item) =>
+        item.id === activeAgentMessageId
+          ? {
+              ...item,
+              runStatus: 'failed',
+              error: { code: 'CLIENT_ERROR', message },
+            }
+          : item,
+      ),
+    }))
   },
 }))

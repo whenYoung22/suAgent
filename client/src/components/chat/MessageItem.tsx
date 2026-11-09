@@ -23,6 +23,11 @@ export function MessageItem({ message }: MessageItemProps) {
       {message.toolCalls.map((tool) => (
         <ToolCallCard key={tool.toolCallId} tool={tool} />
       ))}
+      {message.error && (
+        <div className="run-error" role="alert">
+          {message.error.message}
+        </div>
+      )}
     </article>
   )
 }

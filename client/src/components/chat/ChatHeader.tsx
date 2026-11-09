@@ -1,4 +1,4 @@
-import { Tag, Typography } from 'antd'
+import { Button, Tag, Typography } from 'antd'
 import type { RunStatus } from '../../clientTypes/agent'
 
 const statusLabels: Record<RunStatus, string> = {
@@ -13,9 +13,16 @@ const statusLabels: Record<RunStatus, string> = {
 interface ChatHeaderProps {
   runStatus: RunStatus
   isRunning: boolean
+  sessionTitle: string
+  onOpenSessions: () => void
 }
 
-export function ChatHeader({ runStatus, isRunning }: ChatHeaderProps) {
+export function ChatHeader({
+  runStatus,
+  isRunning,
+  sessionTitle,
+  onOpenSessions,
+}: ChatHeaderProps) {
   const statusColor =
     runStatus === 'error'
       ? 'error'
@@ -28,12 +35,18 @@ export function ChatHeader({ runStatus, isRunning }: ChatHeaderProps) {
   return (
     <header className="topbar">
       <div className="brand">
+        <Button className="mobile-session-button" onClick={onOpenSessions}>
+          会话
+        </Button>
         <span className="brand-mark">s</span>
         <span>suAgent</span>
         <Typography.Text className="brand-caption">
           Agent Streaming Workspace
         </Typography.Text>
       </div>
+      <Typography.Text className="current-session-title" ellipsis>
+        {sessionTitle}
+      </Typography.Text>
       <Tag color={statusColor}>{statusLabels[runStatus]}</Tag>
     </header>
   )

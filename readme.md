@@ -2,7 +2,7 @@
 
 suAgent 是一个基于 React、Express 和 TypeScript 构建的 Agent 流式交互工作台，用于可视化 Agent 工具调用全过程，并支持用户随时中断流式交互。
 
-当前前端 MVP 通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理整轮运行状态与消息/工具调用数据，支持预设场景调试、纯文本流式回答、请求中断及异常处理。Markdown 和代码高亮暂不在 MVP 范围内。
+当前前端通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理运行状态与消息/工具调用数据，并通过持久化会话接口支持会话列表、历史恢复、改名和删除。输入 `1`–`4` 选择预设模拟场景；Markdown 和代码高亮暂不在 MVP 范围内。
 
 
 
@@ -10,12 +10,12 @@ suAgent 是一个基于 React、Express 和 TypeScript 构建的 Agent 流式交
 suAgent/
 ├── client/
 │   └── src/
-│       ├── api/              # HTTP 请求（fetch 发起 SSE 的薄封装）
+│       ├── api/              # 会话 REST API 与 SSE 运行流
 │       ├── assets/
-│       ├── components/       # ThinkingBubble、ToolCallCard、StreamingAnswer、StopButton
+│       ├── components/       # 聊天消息、工具调用卡片、会话侧栏
 │       ├── hooks/            # useAgentStream（SSE 消费与中断控制）
 │       ├── pages/            # ChatPage 等
-│       ├── stores/           # agentStore（Zustand 状态机）
+│       ├── stores/           # agentStore 与 sessionStore
 │       ├── clientTypes/      # 前端 UI 专用类型
 │       ├── utils/            # sseParser（帧切分、解析，可独立测试）
 │       ├── App.tsx
@@ -24,7 +24,7 @@ suAgent/
 ├── server/
 │   └── src/
 │       ├── lib/              # sseSender.ts（SSE 响应生命周期与事件推送）
-│       ├── routes/           # agent.route.ts（/api/agent/run）
+│       ├── routes/           # sessions.route.ts、session-runs.route.ts
 │       ├── scenarios/        # 预设事件序列：singleToolCall、multiToolCall、toolFailure、streamError
 │       ├── app.ts            # 创建 Express 应用
 │       └── server.ts         # 启动 HTTP 服务
@@ -48,7 +48,9 @@ suAgent/
 - **用户中断**：通过 `AbortController` 终止流式响应，区分用户中断与流级错误，中断后保留已生成内容
 - **增量渲染**：最终回答按 `token` 事件逐段追加
 - **错误局部化**：工具调用失败时卡片内降级提示，不阻塞整个对话流
-- **调试场景**：可在单次工具调用、连续工具调用、工具失败和流错误场景间切换
+- **持久化会话**：创建、切换、改名、删除会话；刷新后从服务端恢复消息与工具调用记录
+- **模拟场景**：在聊天输入框输入 `1` 单次工具调用、`2` 连续工具调用、`3` 工具调用失败或 `4` 流式错误
+- **标题编辑**：client 将会话标题限制为 1–15 个字符
 
 ## 技术栈
 
@@ -65,25 +67,20 @@ suAgent/
 ## 架构
 
 ```
-用户输入
+React 前端
+   ├── 会话列表/创建/详情/改名/删除 ──▶ /api/sessions
+   └── 输入 1–4 发起运行 ────────────▶ POST /api/sessions/:sessionId/runs
+                                             │
+                          持久化消息、工具调用与运行状态
+                                             │
+   ◀────────────────────── SSE 事件流 ───────┘
    │
    ▼
-React 前端 ──── fetch POST /api/agent/run ──▶ Express 后端
-   │                                              │
-   │◀────────── SSE 事件流 ──────────────────────┘
-   │
-   ▼
-ReadableStream Reader ──▶ TextDecoder ──▶ 缓冲区按 \n\n 切帧
-                                              │
-                                              ▼
-                                     解析 event / data
-                                              │
-                                              ▼
-                                     Zustand 状态机迁移
-                                              │
-                              ┌───────────────┼───────────────┐
-                              ▼               ▼               ▼
-                         思考气泡        工具调用卡片      增量回答渲染
+ReadableStream Reader ──▶ TextDecoder ──▶ SSEParser ──▶ Zustand
+                                                         │
+                              ┌──────────────────────────┼─────────────────┐
+                              ▼                          ▼                 ▼
+                         思考内容                  工具调用卡片       增量回答渲染
 ```
 
 ## SSE 事件协议
@@ -155,7 +152,11 @@ npm run dev
 
 
 ```bash
-curl.exe -N -X POST http://localhost:3000/api/agent/run -H "Content-Type: application/json" -d "{\"scenario\":\"single-tool-call\"}"
+# 创建会话，从响应中取得 session.id
+curl.exe -X POST http://localhost:3000/api/sessions
+
+# 将 <sessionId> 替换为创建响应中的 id；prompt 可为 1、2、3 或 4
+curl.exe -N -X POST http://localhost:3000/api/sessions/<sessionId>/runs -H "Content-Type: application/json" -d "{\"prompt\":\"1\"}"
 ```
 
 

@@ -1,51 +1,35 @@
-import { Button, Input, Select, Typography } from 'antd'
-import type { AgentScenario } from '../../clientTypes/agent'
+import { Button, Input, Typography } from 'antd'
+import { isScenarioInput } from '../../clientTypes/agent'
 
 const { TextArea } = Input
 
-const scenarios = [
-  { value: 'single-tool-call', label: '单次工具调用' },
-  { value: 'multi-tool-call', label: '连续工具调用' },
-  { value: 'tool-failure', label: '工具调用失败' },
-  { value: 'stream-error', label: '流式错误' },
-] satisfies { value: AgentScenario; label: string }[]
-
 interface ChatComposerProps {
   prompt: string
-  scenario: AgentScenario
+  promptError: string | null
   isRunning: boolean
+  disabled?: boolean
   onPromptChange: (prompt: string) => void
-  onScenarioChange: (scenario: AgentScenario) => void
   onSubmit: () => void
   onStop: () => void
 }
 
 export function ChatComposer({
   prompt,
-  scenario,
+  promptError,
   isRunning,
+  disabled = false,
   onPromptChange,
-  onScenarioChange,
   onSubmit,
   onStop,
 }: ChatComposerProps) {
   return (
     <div className="composer-wrap">
-      <div className="composer-tools">
-        <Typography.Text type="secondary">调试场景</Typography.Text>
-        <Select
-          aria-label="选择调试场景"
-          value={scenario}
-          options={scenarios}
-          onChange={onScenarioChange}
-          disabled={isRunning}
-        />
-      </div>
       <div className="composer">
         <TextArea
           aria-label="输入消息"
-          placeholder="输入一条消息…"
+          placeholder="输入 1、2、3 或 4 选择演示场景…"
           value={prompt}
+          disabled={disabled}
           autoSize={{ minRows: 2, maxRows: 6 }}
           onChange={(event) => onPromptChange(event.target.value)}
           onPressEnter={(event) => {
@@ -60,13 +44,22 @@ export function ChatComposer({
             停止
           </Button>
         ) : (
-          <Button type="primary" onClick={onSubmit} disabled={!prompt.trim()}>
+          <Button
+            type="primary"
+            onClick={onSubmit}
+            disabled={disabled || !isScenarioInput(prompt.trim())}
+          >
             发送
           </Button>
         )}
       </div>
+      {promptError && (
+        <Typography.Text className="composer-error" type="danger" role="alert">
+          {promptError}
+        </Typography.Text>
+      )}
       <Typography.Text className="composer-note" type="secondary">
-        当前使用预设事件场景；输入内容仅显示在对话中，不会改变模拟结果。Enter
+        1 单次工具调用 · 2 连续工具调用 · 3 工具调用失败 · 4 流式错误。Enter
         发送，Shift + Enter 换行。
       </Typography.Text>
     </div>

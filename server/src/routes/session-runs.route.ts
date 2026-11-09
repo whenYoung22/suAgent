@@ -6,8 +6,18 @@ import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
 import { endSSE, initSSE, sendSSE } from "../lib/sseSender.js";
 import { singleToolCallScenario } from "../scenarios/single-tool-call.js";
+import { multiToolCallScenario } from "../scenarios/multi-tool-call.js";
+import { toolFailureScenario } from "../scenarios/tool-failure.js";
+import { streamErrorScenario } from "../scenarios/stream-error.js";
 
 const router = Router();
+
+const scenarios = {
+    "1": { name: "single-tool-call", createEvents: singleToolCallScenario },
+    "2": { name: "multi-tool-call", createEvents: multiToolCallScenario },
+    "3": { name: "tool-failure", createEvents: toolFailureScenario },
+    "4": { name: "stream-error", createEvents: streamErrorScenario }
+} as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -61,6 +71,12 @@ router.post(
             return;
         }
 
+        const selectedScenario = scenarios[prompt.trim() as keyof typeof scenarios];
+        if (!selectedScenario) {
+            res.status(400).json({ message: "Prompt must be 1, 2, 3, or 4" });
+            return;
+        }
+
         const session = await prisma.session.findUnique({
             where: { id: req.params.sessionId },
             select: { id: true }
@@ -85,7 +101,7 @@ router.post(
                 data: {
                     sessionId: session.id,
                     sequence: updatedSession.lastRunSequence,
-                    scenario: "single-tool-call"
+                    scenario: selectedScenario.name
                 }
             });
 
@@ -108,7 +124,7 @@ router.post(
             return createdRun;
         });
 
-        const events = singleToolCallScenario();
+        const events = selectedScenario.createEvents();
         const toolCallSequences = new Map<string, number>();
         let nextToolCallSequence = 0;
         let content = "";
