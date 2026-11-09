@@ -74,6 +74,18 @@ export interface CreateSessionResponse {
   session: SessionSummary
 }
 
+export interface UpdateSessionTitleRequest {
+  title: string
+}
+
+export interface UpdateSessionTitleResponse {
+  session: SessionSummary
+}
+
+export interface RunSessionRequest {
+  prompt: string
+}
+
 
 // 获取与删除
 
