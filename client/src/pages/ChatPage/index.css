@@ -1,0 +1,134 @@
+.workspace {
+  height: 100vh;
+  min-height: 560px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      ellipse at 50% 0,
+      rgba(103, 80, 226, 0.08),
+      transparent 36rem
+    ),
+    #f8f9fc;
+}
+
+.chat-shell {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  /* border: #7765d7 solid 1px; */
+}
+
+.mobile-chat-toolbar {
+  display: none;
+}
+
+.chat-content-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.chat-content-inner {
+  width: min(1400px, calc(100% - 120px));
+  min-height: 100%;
+  margin: 0 auto;
+  padding-bottom: clamp(8rem, 20vh, 14rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-composer-overlay {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  padding-bottom: 2rem;
+  pointer-events: none;
+}
+
+.chat-composer-overlay > * {
+  pointer-events: auto;
+}
+
+.workspace-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.desktop-session-sidebar {
+  flex: 0 0 280px;
+  min-height: 0;
+  border-right: 1px solid #e9ebf2;
+  background: rgba(255, 255, 255, 0.7);
+  transition: flex-basis 180ms ease;
+}
+
+.desktop-session-sidebar.collapsed {
+  flex-basis: 64px;
+}
+
+.session-error {
+  margin: 0 22px 10px;
+}
+
+@media (max-width: 760px) {
+  .mobile-chat-toolbar {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 3rem;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid #e9ebf2;
+    background: rgba(248, 249, 252, 0.96);
+  }
+
+  .chat-content-scroll {
+    top: 3rem;
+  }
+
+  .mobile-chat-toolbar .ant-btn {
+    padding: 0 10px;
+  }
+
+  .mobile-current-session {
+    min-width: 0;
+    color: #48485c;
+  }
+
+  .desktop-session-sidebar {
+    display: none;
+  }
+
+  .chat-shell {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .chat-composer-overlay {
+    padding: 0 3vw 4vw;
+  }
+
+  .chat-content-inner {
+    width: calc(100% - 24px);
+  }
+
+  .session-error {
+    margin-right: 8px;
+    margin-left: 8px;
+  }
+}

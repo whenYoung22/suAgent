@@ -1,0 +1,43 @@
+.tool-card {
+  margin: 10px 0;
+  border-color: #8b93c9;
+  border-radius: 10px;
+  background: #f4f5ff;
+}
+
+.tool-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tool-card details {
+  margin-top: 8px;
+  color: #626276;
+  font-size: 12px;
+}
+
+.tool-card summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.code-label {
+  display: block;
+  margin-top: 10px;
+  color: #9293a3;
+  font-size: 11px;
+}
+
+.tool-card pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 4px 0;
+  padding: 9px 10px;
+  border-radius: 6px;
+  color: #48485c;
+  background: #f6f7fa;
+  font: 11px/1.6 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

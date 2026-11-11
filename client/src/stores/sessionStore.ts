@@ -19,7 +19,8 @@ interface SessionState {
   error: string | null
   initialize: () => Promise<void>
   selectSession: (id: string) => Promise<void>
-  createNewSession: () => Promise<void>
+  startNewChat: () => Promise<void>
+  createSessionForPrompt: () => Promise<string | null>
   renameSession: (id: string, title: string) => Promise<boolean>
   deleteSession: (id: string) => Promise<void>
   refreshSession: (id: string) => Promise<void>
@@ -46,14 +47,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ isLoadingSessions: true, error: null })
 
     try {
-      let sessions = await listSessions()
-      if (sessions.length === 0) {
-        const session = await createSessionRequest()
-        sessions = [session]
-      }
-
+      const sessions = await listSessions()
       set({ sessions, initialized: true })
-      await get().selectSession(sessions[0].id)
     } catch (error) {
       set({ error: getErrorMessage(error) })
     } finally {
@@ -95,14 +90,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  createNewSession: async () => {
+  startNewChat: async () => {
+    detailRequestVersion += 1
+    set({
+      currentSessionId: null,
+      isLoadingSession: false,
+      error: null,
+    })
+    useAgentStore.getState().clearSession()
+  },
+
+  createSessionForPrompt: async () => {
     set({ isMutating: true, error: null })
     try {
       const session = await createSessionRequest()
-      set((state) => ({ sessions: [session, ...state.sessions] }))
-      await get().selectSession(session.id)
+      detailRequestVersion += 1
+      set((state) => ({
+        sessions: [session, ...state.sessions],
+        currentSessionId: session.id,
+        isLoadingSession: false,
+      }))
+      useAgentStore.getState().clearSession()
+      return session.id
     } catch (error) {
       set({ error: getErrorMessage(error) })
+      return null
     } finally {
       set({ isMutating: false })
     }
@@ -145,10 +157,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         useAgentStore.getState().clearSession()
         if (remaining.length > 0) {
           await get().selectSession(remaining[0].id)
-        } else {
-          const replacement = await createSessionRequest()
-          set({ sessions: [replacement] })
-          await get().selectSession(replacement.id)
         }
       }
     } catch (error) {

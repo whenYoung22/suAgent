@@ -1,16 +1,17 @@
-import { Button, Input, Typography } from 'antd'
-import { isScenarioInput } from '../../clientTypes/agent'
+import { Button, Input, Typography } from "antd";
+import { isScenarioInput } from "../../../clientTypes/agent";
+import "./index.css";
 
-const { TextArea } = Input
+const { TextArea } = Input;
 
 interface ChatComposerProps {
-  prompt: string
-  promptError: string | null
-  isRunning: boolean
-  disabled?: boolean
-  onPromptChange: (prompt: string) => void
-  onSubmit: () => void
-  onStop: () => void
+  prompt: string;
+  promptError: string | null;
+  isRunning: boolean;
+  disabled?: boolean;
+  onPromptChange: (prompt: string) => void;
+  onSubmit: () => void;
+  onStop: () => void;
 }
 
 export function ChatComposer({
@@ -30,21 +31,27 @@ export function ChatComposer({
           placeholder="输入 1、2、3 或 4 选择演示场景…"
           value={prompt}
           disabled={disabled}
-          autoSize={{ minRows: 2, maxRows: 6 }}
+          autoSize={{ minRows: 1, maxRows: 5 }}
           onChange={(event) => onPromptChange(event.target.value)}
           onPressEnter={(event) => {
             if (!event.shiftKey) {
-              event.preventDefault()
-              onSubmit()
+              event.preventDefault();
+              onSubmit();
             }
           }}
         />
+        <Typography.Text className="composer-note" type="secondary">
+          1 单次工具调用 · 2 连续工具调用 · 3 工具调用失败 · 4 流式错误。Enter
+          发送，Shift + Enter 换行。
+        </Typography.Text>
+        
         {isRunning ? (
-          <Button danger onClick={onStop}>
+          <Button className="composer-stop-button" onClick={onStop}>
             停止
           </Button>
         ) : (
           <Button
+            className="composer-send-button"
             type="primary"
             onClick={onSubmit}
             disabled={disabled || !isScenarioInput(prompt.trim())}
@@ -58,10 +65,6 @@ export function ChatComposer({
           {promptError}
         </Typography.Text>
       )}
-      <Typography.Text className="composer-note" type="secondary">
-        1 单次工具调用 · 2 连续工具调用 · 3 工具调用失败 · 4 流式错误。Enter
-        发送，Shift + Enter 换行。
-      </Typography.Text>
     </div>
-  )
+  );
 }

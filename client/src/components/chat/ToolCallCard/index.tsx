@@ -1,5 +1,6 @@
 import { Card, Tag, Typography } from 'antd'
-import type { ToolCall } from '../../clientTypes/agent'
+import type { ToolCall } from '../../../clientTypes/agent'
+import './index.css'
 
 const { Text } = Typography
 

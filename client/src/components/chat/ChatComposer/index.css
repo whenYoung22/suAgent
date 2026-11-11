@@ -1,0 +1,81 @@
+.composer-wrap {
+  width: min(60rem, 94%);
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 0.5625rem 0.75rem 0.625rem;
+  border: 0.0625rem solid #e6e7ef;
+  border-radius: 0.8125rem;
+  background: white;
+  box-shadow: 0 0.5rem 1.75rem rgba(37, 35, 75, 0.05);
+}
+
+.composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.composer .ant-input {
+  width: 100%;
+  padding-right: 6rem;
+  resize: none;
+  border: 0;
+  box-shadow: none;
+  font-size: 14px;
+}
+
+.composer .ant-input:focus {
+  box-shadow: none;
+}
+
+.composer .ant-btn {
+  position: absolute;
+  top: 50%;
+  right: 0.25rem;
+  transform: translateY(-50%);
+  min-width: 4.75rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+}
+
+.composer .composer-send-button,
+.composer .composer-stop-button {
+  border-color: #6654d9;
+  color: #fff;
+  background: #6654d9;
+}
+
+.composer .composer-send-button:not(:disabled):hover,
+.composer .composer-stop-button:not(:disabled):hover {
+  border-color: #5745cc;
+  color: #fff;
+  background: #5745cc;
+}
+
+.composer .composer-send-button:disabled {
+  border-color: #c7bfff;
+  color: #fff;
+  background: #c7bfff;
+}
+
+.composer-note {
+  display: block;
+  margin: 0.5rem 0.125rem 0;
+  padding-right: 6rem;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.composer-error {
+  display: block;
+  margin: 0.4375rem 0.125rem 0;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 47.5rem) {
+  .composer-wrap {
+    width: 100%;
+    padding: 0.5rem 0.625rem;
+  }
+}

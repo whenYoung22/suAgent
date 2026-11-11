@@ -1,16 +1,26 @@
 import { useState } from 'react'
-import { Button, Input, Popconfirm, Spin, Typography } from 'antd'
+import { Button, Input, Modal, Spin, Typography } from 'antd'
+import {
+  DeleteOutlined,
+  EditOutlined,
+  FormOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+} from '@ant-design/icons'
 import type { SessionSummary } from '@suagent/shared/session'
+import './index.css'
 
 interface SessionSidebarProps {
   sessions: SessionSummary[]
   currentSessionId: string | null
   isLoading: boolean
   isBusy: boolean
+  isCollapsed?: boolean
+  onToggleCollapse?: () => void
   onCreate: () => void
   onSelect: (id: string) => void
   onRename: (id: string, title: string) => Promise<boolean>
-  onDelete: (id: string) => void
+  onDelete: (id: string) => Promise<void>
 }
 
 export function SessionSidebar({
@@ -18,6 +28,8 @@ export function SessionSidebar({
   currentSessionId,
   isLoading,
   isBusy,
+  isCollapsed = false,
+  onToggleCollapse,
   onCreate,
   onSelect,
   onRename,
@@ -25,6 +37,8 @@ export function SessionSidebar({
 }: SessionSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
+  const [deletingSession, setDeletingSession] =
+    useState<SessionSummary | null>(null)
 
   const beginRename = (session: SessionSummary) => {
     setEditingId(session.id)
@@ -37,15 +51,41 @@ export function SessionSidebar({
   }
 
   return (
-    <aside className="session-sidebar">
-      <div className="session-sidebar-heading">
-        <Typography.Title level={5}>会话</Typography.Title>
-        <Button type="primary" onClick={onCreate} disabled={isBusy}>
-          新建
+    <aside className={`session-sidebar${isCollapsed ? ' is-collapsed' : ''}`}>
+      <div className="sidebar-brand">
+        <div className="sidebar-brand-copy">
+          <Typography.Text className="sidebar-brand-name">suAgent</Typography.Text>
+          <Typography.Text className="sidebar-brand-caption">
+            Agent Streaming Workspace
+          </Typography.Text>
+        </div>
+        {onToggleCollapse && (
+          <Button
+            className="sidebar-toggle"
+            type="text"
+            aria-label={isCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            title={isCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            icon={isCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            onClick={onToggleCollapse}
+          />
+        )}
+      </div>
+
+      <div className="session-new-chat">
+        <Button
+          className="session-create-button"
+          type="text"
+          aria-label="新聊天"
+          title="新聊天"
+          onClick={onCreate}
+          disabled={isBusy}
+        >
+          <FormOutlined aria-hidden="true" />
+          <span>新聊天</span>
         </Button>
       </div>
       {isLoading ? (
-        <div className="session-loading">
+        <div className="session-sidebar-loading">
           <Spin size="small" />
         </div>
       ) : (
@@ -112,20 +152,19 @@ export function SessionSidebar({
                           disabled={isBusy}
                           onClick={() => beginRename(session)}
                         >
+                          <EditOutlined aria-hidden="true" />
                           改名
                         </Button>
-                        <Popconfirm
-                          title="删除这个会话？"
-                          description="删除后无法恢复。"
-                          okText="删除"
-                          cancelText="取消"
-                          okButtonProps={{ danger: true }}
-                          onConfirm={() => onDelete(session.id)}
+                        <Button
+                          type="text"
+                          size="small"
+                          danger
+                          disabled={isBusy}
+                          onClick={() => setDeletingSession(session)}
                         >
-                          <Button type="text" size="small" danger disabled={isBusy}>
-                            删除
-                          </Button>
-                        </Popconfirm>
+                          <DeleteOutlined aria-hidden="true" />
+                          删除
+                        </Button>
                       </div>
                     </>
                   )}
@@ -135,6 +174,30 @@ export function SessionSidebar({
           )}
         </div>
       )}
+      <div className="sidebar-user">
+        <span className="sidebar-user-avatar">苏</span>
+        <Typography.Text className="sidebar-user-name">苏小蕾</Typography.Text>
+      </div>
+      <Modal
+        title={
+          deletingSession
+            ? `删除会话「${deletingSession.title}」？`
+            : '删除这个会话？'
+        }
+        open={deletingSession !== null}
+        centered
+        okText="删除"
+        cancelText="取消"
+        okButtonProps={{ danger: true, disabled: isBusy }}
+        onCancel={() => setDeletingSession(null)}
+        onOk={async () => {
+          if (!deletingSession) return
+          await onDelete(deletingSession.id)
+          setDeletingSession(null)
+        }}
+      >
+        <p>删除后无法恢复。</p>
+      </Modal>
     </aside>
   )
 }
