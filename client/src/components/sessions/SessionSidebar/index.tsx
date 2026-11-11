@@ -174,10 +174,23 @@ export function SessionSidebar({
           )}
         </div>
       )}
-      <div className="sidebar-user">
-        <span className="sidebar-user-avatar">苏</span>
-        <Typography.Text className="sidebar-user-name">苏小蕾</Typography.Text>
-      </div>
+      {isCollapsed && onToggleCollapse ? (
+        <button
+          className="sidebar-user sidebar-user-expand"
+          type="button"
+          aria-label="展开侧边栏"
+          title="展开侧边栏"
+          onClick={onToggleCollapse}
+        >
+          <span className="sidebar-user-avatar">苏</span>
+        </button>
+      ) : (
+        <div className="sidebar-user">
+          <span className="sidebar-user-avatar">苏</span>
+          <Typography.Text className="sidebar-user-name">苏小蕾</Typography.Text>
+        </div>
+      )}
+
       <Modal
         title={
           deletingSession
