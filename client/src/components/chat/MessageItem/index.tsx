@@ -1,13 +1,18 @@
+import { memo } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '../../../clientTypes/agent'
 import { Avatar } from 'antd'
 import { ToolCallCard } from '../ToolCallCard'
 import './index.css'
 
+const remarkPlugins = [remarkGfm]
+
 interface MessageItemProps {
   message: ChatMessage
 }
 
-export function MessageItem({ message }: MessageItemProps) {
+export const MessageItem = memo(function MessageItem({ message }: MessageItemProps) {
   return (
     <article className={`message message-${message.role}`}>
       {message.role === 'user' && (
@@ -18,7 +23,11 @@ export function MessageItem({ message }: MessageItemProps) {
           {message.role === 'user' ? '你' : 'suAgent'}
         </div>
         {message.content && (
-          <div className="message-content">{message.content}</div>
+          <div className="message-content">
+            <ReactMarkdown remarkPlugins={remarkPlugins}>
+              {message.content}
+            </ReactMarkdown>
+          </div>
         )}
         {message.thinking && (
           <div className="thinking-block">
@@ -37,4 +46,4 @@ export function MessageItem({ message }: MessageItemProps) {
       </div>
     </article>
   )
-}
+})

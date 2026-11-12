@@ -75,13 +75,19 @@ export function multiToolCallScenario(): AgentEvent[] {
     {
       type: "token",
       data: {
-        content: "大理有大理古城和洱海等热门景点。"
+        content: "## 大理旅行建议\n\n大理适合安排 **2 天**，可以游览大理古城和洱海。\n\n| 景点 | 推荐体验 |\n| --- | --- |\n"
       }
     },
     {
       type: "token",
       data: {
-        content: "目前模拟天气为晴天，气温 18°C。"
+        content: "| 大理古城 | 漫步古街，品尝当地小吃 |\n"
+      }
+    },
+    {
+      type: "token",
+      data: {
+        content: "| 洱海 | 沿湖骑行，欣赏湖景 |\n\n天气：**晴，18°C**。建议白天做好防晒。"
       }
     },
     {

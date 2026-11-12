@@ -40,13 +40,13 @@ export function singleToolCallScenario(): AgentEvent[] {
     {
       type: "token",
       data: {
-        content: "useEffect 是 React 提供的 Hook，"
+        content: "`useEffect` 是 React 提供的 Hook，常用于处理副作用，例如请求数据和订阅事件。\n\n下面是一个订阅事件并在组件卸载时清理的例子：\n\n```jsx\n"
       }
     },
     {
       type: "token",
       data: {
-        content: "主要用于处理副作用，例如请求数据和订阅事件。"
+        content: "useEffect(() => {\n  const unsubscribe = subscribe();\n  return () => unsubscribe();\n}, []);\n```"
       }
     },
     {

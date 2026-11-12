@@ -34,7 +34,7 @@ export function streamErrorScenario(): AgentEvent[] {
     {
       type: "token",
       data: {
-        content: "SSE（Server-Sent Events）是一种"
+        content: "## SSE 简介\n\n> SSE（Server-Sent Events）是一种基于 HTTP 的服务器推送技术。\n\n它适合服务端向浏览器持续发送事件，例如：\n\n```text\nevent: token\n"
       }
     },
     {
