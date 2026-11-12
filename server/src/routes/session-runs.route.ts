@@ -19,6 +19,72 @@ const scenarios = {
     "4": { name: "stream-error", createEvents: streamErrorScenario }
 } as const;
 
+interface ActiveRun {
+    controller: AbortController;
+    completion: Promise<void>;
+    complete: () => void;
+}
+
+const activeRuns = new Map<string, ActiveRun>();
+
+function createActiveRun(): ActiveRun {
+    let complete!: () => void;
+    const completion = new Promise<void>((resolve) => {
+        complete = resolve;
+    });
+
+    return {
+        controller: new AbortController(),
+        completion,
+        complete
+    };
+}
+
+async function persistInterruptedRun(runId: string): Promise<void> {
+    const finishedAt = new Date();
+    await prisma.$transaction([
+        prisma.toolCall.updateMany({
+            where: { runId, status: "running" },
+            data: {
+                status: "failed",
+                errorMessage: "Run interrupted",
+                finishedAt
+            }
+        }),
+        prisma.agentRun.update({
+            where: { id: runId },
+            data: { status: "interrupted", finishedAt }
+        })
+    ]);
+}
+
+function waitForNextEvent(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal.aborted) {
+            reject(new Error("Run interrupted"));
+            return;
+        }
+
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const onAbort = () => {
+            if (timer) {
+                clearTimeout(timer);
+            }
+            signal.removeEventListener("abort", onAbort);
+            reject(new Error("Run interrupted"));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) {
+            onAbort();
+            return;
+        }
+        timer = setTimeout(() => {
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+        }, 600);
+    });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -58,6 +124,53 @@ function toPrismaJson(value: unknown): Prisma.InputJsonValue | typeof Prisma.Jso
 
     return parsed;
 }
+
+router.delete(
+    "/:sessionId/runs/:runId",
+    async (req: Request<{ sessionId: string; runId: string }>, res: Response) => {
+        const run = await prisma.agentRun.findFirst({
+            where: {
+                id: req.params.runId,
+                sessionId: req.params.sessionId
+            },
+            select: { id: true }
+        });
+
+        if (!run) {
+            res.status(404).json({ message: "Run not found" });
+            return;
+        }
+
+        const activeRun = activeRuns.get(run.id);
+        if (activeRun) {
+            activeRun.controller.abort();
+            await activeRun.completion;
+        } else {
+            const currentRun = await prisma.agentRun.findUnique({
+                where: { id: run.id },
+                select: { status: true }
+            });
+            if (currentRun?.status === "running") {
+                await persistInterruptedRun(run.id);
+            }
+        }
+
+        const completedRun = await prisma.agentRun.findUnique({
+            where: { id: run.id },
+            select: { id: true, status: true }
+        });
+        if (!completedRun) {
+            res.status(404).json({ message: "Run not found" });
+            return;
+        }
+        if (completedRun.status === "running") {
+            res.status(500).json({ message: "Run interruption was not persisted" });
+            return;
+        }
+
+        res.json({ runId: completedRun.id, status: completedRun.status });
+    }
+);
 
 router.post(
     "/:sessionId/runs",
@@ -125,17 +238,28 @@ router.post(
         });
 
         const events = selectedScenario.createEvents();
+        const activeRun = createActiveRun();
+        activeRuns.set(run.id, activeRun);
         const toolCallSequences = new Map<string, number>();
         let nextToolCallSequence = 0;
         let content = "";
         let thinking = "";
 
-        res.setHeader("X-Run-Id", run.id);
-        initSSE(res);
+        res.on("close", () => {
+            if (!res.writableEnded) {
+                activeRun.controller.abort();
+            }
+        });
 
         try {
+            res.setHeader("X-Run-Id", run.id);
+            initSSE(res);
+            if (res.destroyed || req.aborted) {
+                activeRun.controller.abort();
+            }
+
             for (const event of events) {
-                await new Promise<void>((resolve) => setTimeout(resolve, 600));
+                await waitForNextEvent(activeRun.controller.signal);
 
                 if (event.type === "thinking") {
                     thinking += event.data.content;
@@ -204,17 +328,36 @@ router.post(
                     });
                 }
 
+                if (activeRun.controller.signal.aborted) {
+                    throw new Error("Run interrupted");
+                }
+
                 await prisma.session.update({
                     where: { id: session.id },
                     data: { lastActivityAt: new Date() }
                 });
+                if (activeRun.controller.signal.aborted) {
+                    throw new Error("Run interrupted");
+                }
                 sendSSE(res, event);
+                if (activeRun.controller.signal.aborted) {
+                    throw new Error("Run interrupted");
+                }
 
                 if (event.type === "done" || event.type === "error") {
                     break;
                 }
             }
         } catch (error) {
+            if (activeRun.controller.signal.aborted) {
+                try {
+                    await persistInterruptedRun(run.id);
+                } catch (persistError) {
+                    console.error("Session run interruption persistence error:", persistError);
+                }
+                return;
+            }
+
             console.error("Session run stream error:", error);
 
             const errorEvent: AgentEvent = {
@@ -234,9 +377,19 @@ router.post(
                     errorMessage: errorEvent.data.message
                 }
             });
+            if (activeRun.controller.signal.aborted) {
+                try {
+                    await persistInterruptedRun(run.id);
+                } catch (persistError) {
+                    console.error("Session run interruption persistence error:", persistError);
+                }
+                return;
+            }
             sendSSE(res, errorEvent);
         } finally {
             endSSE(res);
+            activeRuns.delete(run.id);
+            activeRun.complete();
         }
     }
 );

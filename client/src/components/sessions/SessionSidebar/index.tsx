@@ -158,7 +158,6 @@ export function SessionSidebar({
                         <Button
                           type="text"
                           size="small"
-                          danger
                           disabled={isBusy}
                           onClick={() => setDeletingSession(session)}
                         >

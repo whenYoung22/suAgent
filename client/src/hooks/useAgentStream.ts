@@ -1,15 +1,21 @@
 // 这是客户端流式调用的 React 封装层:把会话 API 和 AgentStore(状态管理)接起来,
 // 对外暴露 start / stop / isRunning,让组件只需调用即可 ； 核心要解决三件事:并发保护、取消语义、异常状态归类
 
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { runSession } from '../api/agentStream'
+import { cancelSessionRun } from '../api/sessions'
 import { isScenarioInput } from '../clientTypes/agent'
 import { useAgentStore } from '../stores/agentStore'
 import { useSessionStore } from '../stores/sessionStore'
 
 export function useAgentStream() {
-  // ref + store 选择器
   const controllerRef = useRef<AbortController | null>(null)
+  const activeRunRef = useRef<{
+    sessionId: string
+    runId: string | null
+  } | null>(null)
+  const cancelPromiseRef = useRef<Promise<void> | null>(null)
+  const [isStopping, setIsStopping] = useState(false)
 
   const beginRun = useAgentStore((state) => state.beginRun)
   const handleEvent = useAgentStore((state) => state.handleEvent)
@@ -17,10 +23,12 @@ export function useAgentStream() {
   const failRun = useAgentStore((state) => state.failRun)
   const setActiveRunId = useAgentStore((state) => state.setActiveRunId)
   const refreshSession = useSessionStore((state) => state.refreshSession)
-  const isRunning = useAgentStore(
+  const setSessionError = useSessionStore((state) => state.setError)
+  const isRunningInStore = useAgentStore(
     (state) =>
       state.runStatus === 'thinking' || state.runStatus === 'calling_tool',
   )
+  const isRunning = isRunningInStore || isStopping
 
   // 发起一次运行
   const start = useCallback(
@@ -38,6 +46,8 @@ export function useAgentStream() {
 
       const controller = new AbortController()
       controllerRef.current = controller
+      activeRunRef.current = { sessionId, runId: null }
+      cancelPromiseRef.current = null
       beginRun(trimmedPrompt)     // ② 同步进入"运行中"
       let requestError: string | null = null
 
@@ -47,7 +57,12 @@ export function useAgentStream() {
           trimmedPrompt,
           controller.signal,
           handleEvent,
-          setActiveRunId,
+          (runId) => {
+            if (activeRunRef.current?.sessionId === sessionId) {
+              activeRunRef.current.runId = runId
+            }
+            setActiveRunId(runId)
+          },
         )
       } catch (error) {
         if (controllerRef.current !== controller) {  
@@ -61,24 +76,51 @@ export function useAgentStream() {
           failRun(requestError)  // ⑤ 失败
         }
       } finally {
-        if (controllerRef.current === controller) {
-          controllerRef.current = null         // ⑥ 只清理"自己的"引用
+        if (cancelPromiseRef.current) {
+          await cancelPromiseRef.current
         }
-        await refreshSession(sessionId)
+        const runIdKnown = Boolean(activeRunRef.current?.runId)
+        if (!controller.signal.aborted || runIdKnown) {
+          await refreshSession(sessionId)
+        }
+        if (controllerRef.current === controller) {
+          controllerRef.current = null
+          activeRunRef.current = null
+          cancelPromiseRef.current = null
+        }
         if (requestError) failRun(requestError)
+        setIsStopping(false)
       }
     },
-    [beginRun, failRun, handleEvent, interruptRun, refreshSession, setActiveRunId],
+    [
+      beginRun,
+      failRun,
+      handleEvent,
+      interruptRun,
+      refreshSession,
+      setActiveRunId,
+    ],
   )
 
   const stop = useCallback(() => {
     const controller = controllerRef.current
-    if (!controller) return
+    if (!controller || cancelPromiseRef.current) return
 
-    interruptRun()   // ① 先更新 UI 状态
-    controller.abort()  // ② 再中止请求
-    controllerRef.current = null  // ③ 立即清 ref
-  }, [interruptRun])
+    interruptRun()
+    setIsStopping(true)
+    const activeRun = activeRunRef.current
+    if (activeRun?.runId) {
+      cancelPromiseRef.current = cancelSessionRun(
+        activeRun.sessionId,
+        activeRun.runId,
+      ).catch((error: unknown) => {
+        const message =
+          error instanceof Error ? error.message : 'Unknown cancellation error.'
+        setSessionError(`无法确认服务端中断：${message}`)
+      })
+    }
+    controller.abort()
+  }, [interruptRun, setSessionError])
 
   return {
     start,

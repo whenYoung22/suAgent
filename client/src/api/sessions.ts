@@ -30,6 +30,16 @@ export async function getSession(id: string, signal?: AbortSignal) {
   return data.session
 }
 
+export async function cancelSessionRun(sessionId: string, runId: string) {
+  const response = await fetch(
+    apiUrl(
+      `/api/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}`,
+    ),
+    { method: 'DELETE' },
+  )
+  if (!response.ok) throw new Error(await getResponseError(response))
+}
+
 export async function updateSessionTitle(id: string, title: string) {
   const response = await fetch(
     apiUrl(`/api/sessions/${encodeURIComponent(id)}`),

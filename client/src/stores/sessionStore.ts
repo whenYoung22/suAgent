@@ -24,6 +24,7 @@ interface SessionState {
   renameSession: (id: string, title: string) => Promise<boolean>
   deleteSession: (id: string) => Promise<void>
   refreshSession: (id: string) => Promise<void>
+  setError: (message: string) => void
   clearError: () => void
 }
 
@@ -191,4 +192,5 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   clearError: () => set({ error: null }),
+  setError: (message) => set({ error: message }),
 }))
