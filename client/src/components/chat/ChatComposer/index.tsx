@@ -1,12 +1,10 @@
 import { Button, Input, Typography } from "antd";
-import { isScenarioInput } from "../../../clientTypes/agent";
 import "./index.css";
 
 const { TextArea } = Input;
 
 interface ChatComposerProps {
   prompt: string;
-  promptError: string | null;
   isRunning: boolean;
   disabled?: boolean;
   onPromptChange: (prompt: string) => void;
@@ -16,7 +14,6 @@ interface ChatComposerProps {
 
 export function ChatComposer({
   prompt,
-  promptError,
   isRunning,
   disabled = false,
   onPromptChange,
@@ -28,7 +25,7 @@ export function ChatComposer({
       <div className="composer">
         <TextArea
           aria-label="输入消息"
-          placeholder="输入 1、2、3 或 4 选择演示场景…"
+          placeholder="输入问题开始对话；Mock 模式也可输入 1–4 选择演示场景…"
           value={prompt}
           disabled={disabled}
           autoSize={{ minRows: 1, maxRows: 5 }}
@@ -41,8 +38,8 @@ export function ChatComposer({
           }}
         />
         <Typography.Text className="composer-note" type="secondary">
-          1 单次工具调用 · 2 连续工具调用 · 3 工具调用失败 · 4 流式错误。Enter
-          发送，Shift + Enter 换行。
+          Mock 模式：1 单次工具调用 · 2 连续工具调用 · 3 工具失败 · 4 流式错误。
+          Enter 发送，Shift + Enter 换行。
         </Typography.Text>
         
         {isRunning ? (
@@ -54,17 +51,12 @@ export function ChatComposer({
             className="composer-send-button"
             type="primary"
             onClick={onSubmit}
-            disabled={disabled || !isScenarioInput(prompt.trim())}
+            disabled={disabled || !prompt.trim()}
           >
             发送
           </Button>
         )}
       </div>
-      {promptError && (
-        <Typography.Text className="composer-error" type="danger" role="alert">
-          {promptError}
-        </Typography.Text>
-      )}
     </div>
   );
 }

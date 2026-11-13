@@ -34,13 +34,6 @@ export interface ChatMessage {
 
 export type AgentEventHandler = (event: AgentEvent) => void
 
-export const scenarioInputs = ['1', '2', '3', '4'] as const
-export type ScenarioInput = (typeof scenarioInputs)[number]
-
-export function isScenarioInput(value: string): value is ScenarioInput {
-  return scenarioInputs.some((input) => input === value)
-}
-
 export function toToolCallStatus(status: SessionToolCallStatus): ToolCall['status'] {
   switch (status) {
     case 'running':

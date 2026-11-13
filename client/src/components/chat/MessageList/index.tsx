@@ -33,9 +33,9 @@ export function MessageList({
             <Typography.Title level={3}>你好，有什么可以帮你？</Typography.Title>
           </div>
           <div className="empty-prompt">
-            <Typography.Text strong>开始一次模拟运行</Typography.Text>
+            <Typography.Text strong>开始一次对话</Typography.Text>
             <Typography.Text type="secondary">
-              输入 1–4 选择演示场景，查看事件如何逐步到达。
+              输入自然语言开始对话；Mock 模式下输入 1–4 可查看演示场景。
             </Typography.Text>
           </div>
         </div>

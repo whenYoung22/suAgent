@@ -1,8 +1,8 @@
 # suAgent
 
-suAgent 是一个基于 React、Express 和 TypeScript 构建的 Agent 流式交互工作台，用于可视化 Agent 工具调用全过程，并支持用户随时中断流式交互。
+suAgent 是一个基于 React、Express 和 TypeScript 构建的 Agent 流式交互工作台，支持通过 DeepSeek 进行真实流式问答，也提供模拟工具调用场景，并支持用户随时中断流式交互。
 
-当前前端通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理运行状态与消息/工具调用数据，并通过持久化会话接口支持会话列表、历史恢复、改名和删除。输入 `1`–`4` 选择预设模拟场景；Markdown 和代码高亮暂不在 MVP 范围内。
+当前前端通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理运行状态与消息/工具调用数据，并通过持久化会话接口支持会话列表、历史恢复、改名和删除。通过服务端 `AGENT_PROVIDER` 选择 `mock` 或 `deepseek`；DeepSeek 模式支持自然语言流式问答，Mock 模式输入 `1`–`4` 选择预设模拟场景。当前未接入真实 Tool Calling / Agent Loop。
 
 
 
@@ -49,7 +49,8 @@ suAgent/
 - **增量渲染**：最终回答按 `token` 事件逐段追加
 - **错误局部化**：工具调用失败时卡片内降级提示，不阻塞整个对话流
 - **持久化会话**：创建、切换、改名、删除会话；刷新后从服务端恢复消息与工具调用记录
-- **模拟场景**：在聊天输入框输入 `1` 单次工具调用、`2` 连续工具调用、`3` 工具调用失败或 `4` 流式错误
+- **DeepSeek 流式问答**：服务端调用 DeepSeek Chat Completions API，将模型输出映射为统一 Agent SSE 事件
+- **模拟场景**：Mock 模式下输入 `1` 单次工具调用、`2` 连续工具调用、`3` 工具调用失败或 `4` 流式错误
 - **标题编辑**：client 将会话标题限制为 1–15 个字符
 
 ## 技术栈
@@ -69,7 +70,7 @@ suAgent/
 ```
 React 前端
    ├── 会话列表/创建/详情/改名/删除 ──▶ /api/sessions
-   └── 输入 1–4 发起运行 ────────────▶ POST /api/sessions/:sessionId/runs
+   └── 输入自然语言或 Mock 场景 ─────▶ POST /api/sessions/:sessionId/runs
                                              │
                           持久化消息、工具调用与运行状态
                                              │
@@ -142,12 +143,16 @@ npm run dev
 
 前端默认运行在 `http://localhost:5173`，后端默认 `http://localhost:3000`。Vite 开发服务器会将 `/api` 请求代理到后端；如需跨域直连其他后端，可通过 `VITE_API_BASE_URL` 配置 API 基地址。
 
+### DeepSeek 配置
+
+在 `server/.env` 中设置 `AGENT_PROVIDER="deepseek"`、`DEEPSEEK_API_KEY`，并可选设置 `DEEPSEEK_MODEL`（默认 `deepseek-chat`）。API Key 仅由服务端读取，不要放入前端环境变量。默认 `AGENT_PROVIDER="mock"`，可继续使用 `1`–`4` 演示场景。
+
 ## 开发阶段
 
 1. **阶段一**：Express 硬编码事件流，前端跑通 SSE 解析与最小渲染链路
 2. **阶段二**：Zustand 状态机、工具卡片、增量渲染，完成正常流程
 3. **阶段三**：`AbortController` 中断、错误降级、跨 chunk 边界处理
-4. **阶段四**（可选）：后端接入 DeepSeek Function Calling，前端协议不变，验证消费层对真实模型流的兼容性
+4. **阶段四**：已接入 DeepSeek 流式问答，前端协议不变；Tool Calling / Agent Loop 仍是后续扩展
 
 
 

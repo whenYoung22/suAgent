@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Drawer, Typography } from 'antd'
-import { isScenarioInput } from '../../clientTypes/agent'
 import { ChatComposer } from '../../components/chat/ChatComposer'
 import { MessageList } from '../../components/chat/MessageList'
 import { SessionSidebar } from '../../components/sessions/SessionSidebar'
@@ -46,13 +45,9 @@ function ChatPage() {
     (session) => session.id === currentSessionId,
   )
   const trimmedPrompt = prompt.trim()
-  const promptError =
-    trimmedPrompt && !isScenarioInput(trimmedPrompt)
-      ? '请输入 1、2、3 或 4。'
-      : null
 
   const submit = async () => {
-    if (!trimmedPrompt || !isScenarioInput(trimmedPrompt) || isRunning) return
+    if (!trimmedPrompt || isRunning) return
     if (isLoadingSessions || isLoadingSession || isMutating) return
 
     const sessionId =
@@ -126,7 +121,6 @@ function ChatPage() {
           <div className="chat-composer-overlay">
             <ChatComposer
               prompt={prompt}
-              promptError={promptError}
               isRunning={isRunning}
               disabled={
                 isLoadingSessions || isLoadingSession || isMutating

@@ -67,12 +67,6 @@
   line-height: 1.5;
 }
 
-.composer-error {
-  display: block;
-  margin: 0.4375rem 0.125rem 0;
-  font-size: 0.75rem;
-}
-
 @media (max-width: 47.5rem) {
   .composer-wrap {
     width: 100%;

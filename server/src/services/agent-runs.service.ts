@@ -6,6 +6,11 @@ import { singleToolCallScenario } from "../scenarios/single-tool-call.js";
 import { multiToolCallScenario } from "../scenarios/multi-tool-call.js";
 import { toolFailureScenario } from "../scenarios/tool-failure.js";
 import { streamErrorScenario } from "../scenarios/stream-error.js";
+import {
+    DeepSeekServiceError,
+    streamDeepSeekEvents
+} from "./deepseek.service.js";
+import type { DeepSeekMessage } from "./deepseek.service.js";
 
 const scenarios = {
     "1": { name: "single-tool-call", createEvents: singleToolCallScenario },
@@ -15,6 +20,10 @@ const scenarios = {
 } as const;
 
 type Scenario = (typeof scenarios)[keyof typeof scenarios];
+type AgentProvider = "mock" | "deepseek";
+type RunInput =
+    | { prompt: string; provider: "mock"; scenario: Scenario }
+    | { prompt: string; provider: "deepseek" };
 
 export class AgentRunServiceError extends Error {
     constructor(
@@ -30,6 +39,8 @@ export interface CreatedRun {
     id: string;
     sessionId: string;
     prompt: string;
+    provider: AgentProvider;
+    conversation: DeepSeekMessage[];
 }
 
 interface ActiveRun {
@@ -52,6 +63,29 @@ function getScenario(prompt: unknown): { prompt: string; scenario: Scenario } {
     }
 
     return { prompt: normalizedPrompt, scenario };
+}
+
+function getAgentProvider(): AgentProvider {
+    const provider = process.env.AGENT_PROVIDER?.trim() || "mock";
+    if (provider !== "mock" && provider !== "deepseek") {
+        throw new AgentRunServiceError(
+            "AGENT_PROVIDER must be either mock or deepseek",
+            500
+        );
+    }
+    return provider;
+}
+
+function getRunInput(input: unknown): RunInput {
+    const provider = getAgentProvider();
+    if (provider === "mock") {
+        const { prompt, scenario } = getScenario(input);
+        return { prompt, provider, scenario };
+    }
+    if (typeof input !== "string" || input.trim().length === 0) {
+        throw new AgentRunServiceError("Prompt is required", 400);
+    }
+    return { prompt: input.trim(), provider };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -153,7 +187,8 @@ async function persistInterruptedRun(runId: string): Promise<void> {
 }
 
 export async function createRun(sessionId: string, input: unknown): Promise<CreatedRun> {
-    const { prompt, scenario } = getScenario(input);
+    const runInput = getRunInput(input);
+    const { prompt, provider } = runInput;
     const session = await prisma.session.findUnique({
         where: { id: sessionId },
         select: { id: true }
@@ -162,7 +197,7 @@ export async function createRun(sessionId: string, input: unknown): Promise<Crea
         throw new AgentRunServiceError("Session not found", 404);
     }
 
-    const run = await prisma.$transaction(async (transaction) => {
+    const { run, conversation } = await prisma.$transaction(async (transaction) => {
         const updatedSession = await transaction.session.update({
             where: { id: session.id },
             data: {
@@ -172,11 +207,28 @@ export async function createRun(sessionId: string, input: unknown): Promise<Crea
             select: { lastRunSequence: true }
         });
 
+        const previousRuns = provider === "deepseek"
+            ? await transaction.agentRun.findMany({
+                where: {
+                    sessionId: session.id,
+                    status: "completed",
+                    scenario: "deepseek"
+                },
+                orderBy: { sequence: "desc" },
+                take: 10,
+                include: {
+                    messages: { orderBy: { createdAt: "asc" } }
+                }
+            })
+            : [];
+
         const createdRun = await transaction.agentRun.create({
             data: {
                 sessionId: session.id,
                 sequence: updatedSession.lastRunSequence,
-                scenario: scenario.name
+                scenario: runInput.provider === "mock"
+                    ? runInput.scenario.name
+                    : "deepseek"
             }
         });
 
@@ -196,10 +248,29 @@ export async function createRun(sessionId: string, input: unknown): Promise<Crea
             }
         });
 
-        return createdRun;
+        const conversation = previousRuns
+            .reverse()
+            .flatMap((previousRun) =>
+                previousRun.messages.flatMap((message): DeepSeekMessage[] => {
+                    if (message.role === "user") {
+                        return [{ role: "user", content: message.content }];
+                    }
+                    return message.content
+                        ? [{ role: "assistant", content: message.content }]
+                        : [];
+                })
+            );
+
+        return { run: createdRun, conversation };
     });
 
-    return { id: run.id, sessionId: session.id, prompt };
+    return {
+        id: run.id,
+        sessionId: session.id,
+        prompt,
+        provider,
+        conversation
+    };
 }
 
 export async function executeRun(
@@ -216,8 +287,16 @@ export async function executeRun(
     activeRuns.set(run.id, activeRun);
 
     try {
-        const { scenario } = getScenario(run.prompt);
-        const events = scenario.createEvents();
+        const scenario = run.provider === "mock"
+            ? getScenario(run.prompt).scenario
+            : null;
+        const events = scenario
+            ? scenario.createEvents()
+            : streamDeepSeekEvents(
+                run.prompt,
+                run.conversation,
+                activeRun.controller.signal
+            );
         if (activeRun.controller.signal.aborted) {
             throw new Error("Run interrupted");
         }
@@ -226,8 +305,10 @@ export async function executeRun(
         let content = "";
         let thinking = "";
 
-        for (const event of events) {
-            await waitForNextEvent(activeRun.controller.signal);
+        for await (const event of events) {
+            if (scenario) {
+                await waitForNextEvent(activeRun.controller.signal);
+            }
 
             if (event.type === "thinking") {
                 thinking += event.data.content;
@@ -322,13 +403,16 @@ export async function executeRun(
             return;
         }
 
+        const runError = error instanceof DeepSeekServiceError
+            ? { code: error.code, message: error.message }
+            : { code: "INTERNAL_ERROR", message: "Agent stream failed" };
         await prisma.agentRun.update({
             where: { id: run.id },
             data: {
                 status: "failed",
                 finishedAt: new Date(),
-                errorCode: "INTERNAL_ERROR",
-                errorMessage: "Agent stream failed"
+                errorCode: runError.code,
+                errorMessage: runError.message
             }
         });
         if (activeRun.controller.signal.aborted) {
@@ -338,6 +422,14 @@ export async function executeRun(
                 console.error("Session run interruption persistence error:", persistError);
                 throw persistError;
             }
+            return;
+        }
+        if (error instanceof DeepSeekServiceError) {
+            await prisma.session.update({
+                where: { id: run.sessionId },
+                data: { lastActivityAt: new Date() }
+            });
+            onEvent({ type: "error", data: runError });
             return;
         }
         throw error;

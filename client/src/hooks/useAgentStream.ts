@@ -4,7 +4,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { runSession } from '../api/agentStream'
 import { cancelSessionRun } from '../api/sessions'
-import { isScenarioInput } from '../clientTypes/agent'
 import { useAgentStore } from '../stores/agentStore'
 import { useSessionStore } from '../stores/sessionStore'
 
@@ -39,11 +38,6 @@ export function useAgentStream() {
         failRun('请先选择或创建一个会话。')
         return
       }
-      if (!isScenarioInput(trimmedPrompt)) {
-        failRun('请输入 1、2、3 或 4 选择演示场景。')
-        return
-      }
-
       const controller = new AbortController()
       controllerRef.current = controller
       activeRunRef.current = { sessionId, runId: null }
