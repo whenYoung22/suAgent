@@ -53,7 +53,7 @@ export const agentToolDefinitions: AgentToolDefinition[] = [
                 properties: {
                     city: {
                         type: "string",
-                        description: "城市名称，例如昆明或上海。"
+                        description: "城市英文名或拼音，例如 Changsha、Kunming、Tokyo；Open-Meteo 地理编码按英文名称查询。"
                     },
                     country: {
                         type: "string",
@@ -61,7 +61,7 @@ export const agentToolDefinitions: AgentToolDefinition[] = [
                     },
                     region: {
                         type: "string",
-                        description: "可选的省份、州或行政区，用于区分同名地点。"
+                        description: "可选的英文省份、州或行政区名称，例如 Hunan，用于区分同名地点。"
                     }
                 },
                 required: ["city"],
@@ -163,6 +163,7 @@ interface GeocodedLocation {
     countryCode?: string;
     admin1?: string;
     admin2?: string;
+    featureCode?: string;
 }
 
 function toGeocodedLocation(value: unknown): GeocodedLocation | undefined {
@@ -182,7 +183,10 @@ function toGeocodedLocation(value: unknown): GeocodedLocation | undefined {
             ? { countryCode: value.country_code }
             : {}),
         ...(typeof value.admin1 === "string" ? { admin1: value.admin1 } : {}),
-        ...(typeof value.admin2 === "string" ? { admin2: value.admin2 } : {})
+        ...(typeof value.admin2 === "string" ? { admin2: value.admin2 } : {}),
+        ...(typeof value.feature_code === "string"
+            ? { featureCode: value.feature_code }
+            : {})
     };
 }
 
@@ -277,12 +281,36 @@ function matchesLocationFilter(
     );
 }
 
+function getFeaturePriority(featureCode: string | undefined): number {
+    switch (featureCode) {
+        case "PPLC":
+            return 6;
+        case "PPLA":
+            return 5;
+        case "PPLA2":
+            return 4;
+        case "PPLA3":
+            return 3;
+        case "PPLA4":
+            return 2;
+        case "PPL":
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 function selectGeocodedLocation(
     locations: GeocodedLocation[],
     city: string,
     country?: string,
     region?: string
 ): GeocodedLocation {
+    const needsEnglishName = /[\u3400-\u9fff]/u.test(city) ||
+        (region !== undefined && /[\u3400-\u9fff]/u.test(region));
+    const hint = needsEnglishName
+        ? " Retry with English or pinyin names for the city and region (for example Changsha and Hunan)."
+        : "";
     const matches = locations.filter((location) =>
         matchesLocationFilter(
             [location.country, location.countryCode],
@@ -294,7 +322,7 @@ function selectGeocodedLocation(
     if (matches.length === 0) {
         if (locations.length === 0) {
             throw new AgentToolError(
-                `Open-Meteo could not find a location named "${city}".`
+                `Open-Meteo could not find a location named "${city}".${hint}`
             );
         }
         if (country && /^[a-z]{3}$/i.test(country) &&
@@ -304,7 +332,7 @@ function selectGeocodedLocation(
             );
         }
         throw new AgentToolError(
-            `No Open-Meteo result for "${city}" matched the requested country or region.`
+            `No Open-Meteo result for "${city}" matched the requested country or region.${hint}`
         );
     }
 
@@ -324,12 +352,27 @@ function selectGeocodedLocation(
     const exactNameMatches = results.filter((location) =>
         normalizeLocationValue(location.name) === normalizeLocationValue(city)
     );
-    const preferredResults = exactNameMatches.length > 0
+    const namedResults = exactNameMatches.length > 0
         ? exactNameMatches
         : results;
+    const countries = new Set(namedResults
+        .map((location) => location.countryCode ?? location.country)
+        .filter((value): value is string => value !== undefined));
+    if (!country && countries.size > 1) {
+        throw new AgentToolError(
+            `"${city}" matches locations in multiple countries. Specify a country or region.${hint}`
+        );
+    }
+
+    const bestPriority = Math.max(...namedResults.map((location) =>
+        getFeaturePriority(location.featureCode)
+    ));
+    const preferredResults = namedResults.filter((location) =>
+        getFeaturePriority(location.featureCode) === bestPriority
+    );
     if (preferredResults.length > 1) {
         throw new AgentToolError(
-            `"${city}" matches multiple locations. Specify a country or region.`
+            `"${city}" matches multiple locations. Specify a country or region.${hint}`
         );
     }
     return preferredResults[0];
@@ -344,7 +387,6 @@ async function getWeather(
     const country = getStringArgument(record, "country", false);
     const region = getStringArgument(record, "region", false);
     const geocodingName = stripLocationSuffix(city) || city;
-    const geocodingLanguage = /[\u3400-\u9fff]/u.test(city) ? "zh" : "en";
     const apiToken = process.env.CAIYUN_API_TOKEN?.trim();
     if (!apiToken) {
         throw new AgentToolError("CAIYUN_API_TOKEN is not configured on the server.");
@@ -353,7 +395,7 @@ async function getWeather(
     const geocodingUrl = new URL("https://geocoding-api.open-meteo.com/v1/search");
     geocodingUrl.searchParams.set("name", geocodingName);
     geocodingUrl.searchParams.set("count", "100");
-    geocodingUrl.searchParams.set("language", geocodingLanguage);
+    geocodingUrl.searchParams.set("language", "en");
     geocodingUrl.searchParams.set("format", "json");
     const geocodingPayload = await fetchJson(
         geocodingUrl,

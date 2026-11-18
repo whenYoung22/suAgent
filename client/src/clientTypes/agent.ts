@@ -2,6 +2,7 @@
 
 import type { AgentEvent } from '@suagent/shared'
 import type {
+  AgentLoopStopReason,
   AgentRunStatus,
   SessionMessageError,
   SessionToolCallStatus,
@@ -14,6 +15,7 @@ export type ToolCallStatus = 'running' | 'success' | 'error'
 export interface ToolCall {
   toolCallId: string
   toolName: string
+  modelRound?: number
   arguments: Record<string, unknown>
   status: ToolCallStatus
   result?: unknown
@@ -30,6 +32,9 @@ export interface ChatMessage {
   toolCalls: ToolCall[]
   runStatus?: AgentRunStatus
   error?: SessionMessageError | null
+  modelRounds?: number
+  toolCallCount?: number
+  stopReason?: AgentLoopStopReason | null
 }
 
 export type AgentEventHandler = (event: AgentEvent) => void

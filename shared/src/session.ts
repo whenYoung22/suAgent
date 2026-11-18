@@ -1,6 +1,15 @@
 // Agent 运行状态
 export type AgentRunStatus = | 'running' | 'completed' | 'interrupted' | 'failed'
 
+export type AgentLoopStopReason =
+  | 'completed'
+  | 'interrupted'
+  | 'model_round_limit'
+  | 'tool_call_limit'
+  | 'repeated_tool_failure'
+  | 'tool_recovery_limit'
+  | 'error'
+
 // 工具调用状态
 export type SessionToolCallStatus = 'running' | 'succeeded' | 'failed'
 
@@ -16,6 +25,7 @@ export interface SessionSummary {
 export interface SessionToolCall {
   toolCallId: string
   toolName: string
+  modelRound: number
   arguments: Record<string, unknown>
   status: SessionToolCallStatus
   result?: unknown
@@ -50,6 +60,9 @@ export interface AgentSessionMessage extends SessionMessageBase {
   toolCalls: SessionToolCall[]
   runStatus: AgentRunStatus
   error: SessionMessageError | null
+  modelRounds: number
+  toolCallCount: number
+  stopReason: AgentLoopStopReason | null
 }
 
 // 判别联合消息类型 用户|Agent

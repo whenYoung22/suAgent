@@ -42,6 +42,7 @@ function toChatToolCall(tool: SessionToolCall): ChatMessage['toolCalls'][number]
   return {
     toolCallId: tool.toolCallId,
     toolName: tool.toolName,
+    modelRound: tool.modelRound,
     arguments: tool.arguments,
     status: toToolCallStatus(tool.status),
     ...(tool.result === undefined ? {} : { result: tool.result }),
@@ -72,6 +73,9 @@ function toChatMessage(message: SessionMessage): ChatMessage {
     toolCalls: message.toolCalls.map(toChatToolCall),
     runStatus: message.runStatus,
     error: message.error,
+    modelRounds: message.modelRounds,
+    toolCallCount: message.toolCallCount,
+    stopReason: message.stopReason,
   }
 }
 

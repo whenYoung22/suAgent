@@ -15,12 +15,25 @@ import {
     agentToolDefinitions,
     executeAgentTool
 } from "./agent-tools.service.js";
+import {
+    beginModelRound,
+    createAgentLoopState,
+    getToolBatchStopReason,
+    getToolCallSignature,
+    MAX_MODEL_ROUNDS,
+    MAX_TOOL_CALLS,
+    recordToolBatchResults,
+    recordToolCallStarted
+} from "./agent-loop-state.js";
+import type {
+    AgentLoopBudgetStopReason,
+    AgentLoopToolCall
+} from "./agent-loop-state.js";
 
-const MAX_MODEL_ROUNDS = 5;
 const DEEPSEEK_SYSTEM_PROMPT =
     "请直接使用 Markdown 格式回答。不要将整段普通回答包在代码围栏中；只有实际代码片段才使用代码围栏。" +
-    "查询天气时，如果需要传 country 国家代码，必须使用 ISO 3166-1 alpha-2 两位代码（例如 JP），不要使用 JPN 这样的三位代码；" +
-    "如果工具返回失败，不要原样重复相同参数调用，应根据错误修正参数；仍无法完成时向用户说明原因。";
+    "查询天气时，city 和 region 请使用 Open-Meteo 可识别的英文名或拼音（例如 Changsha、Hunan）；country 如需填写，必须使用 ISO 3166-1 alpha-2 两位代码（例如 CN），不要使用三位代码；" +
+    "工具调用失败后可以修正参数重试一次；不要重复同一工具和相同参数，修正仍失败时停止调用工具并说明原因。";
 
 const scenarios = {
     "1": { name: "single-tool-call", createEvents: singleToolCallScenario },
@@ -60,6 +73,31 @@ interface ActiveRun {
 }
 
 const activeRuns = new Map<string, ActiveRun>();
+
+function createLoopLimitError(reason: AgentLoopBudgetStopReason): DeepSeekServiceError {
+    switch (reason) {
+        case "model_round_limit":
+            return new DeepSeekServiceError(
+                "AGENT_LOOP_LIMIT_REACHED",
+                `The Agent reached the maximum of ${MAX_MODEL_ROUNDS} model requests before completing the response.`
+            );
+        case "tool_call_limit":
+            return new DeepSeekServiceError(
+                "AGENT_TOOL_CALL_LIMIT_REACHED",
+                `The Agent reached the maximum of ${MAX_TOOL_CALLS} tool calls for this run.`
+            );
+        case "repeated_tool_failure":
+            return new DeepSeekServiceError(
+                "AGENT_REPEATED_TOOL_FAILURE",
+                "The Agent stopped because the same tool call failed more than once."
+            );
+        case "tool_recovery_limit":
+            return new DeepSeekServiceError(
+                "AGENT_TOOL_RECOVERY_LIMIT",
+                "The Agent could not recover from the tool failure after one correction attempt."
+            );
+    }
+}
 
 function getScenario(prompt: unknown): { prompt: string; scenario: Scenario } {
     if (typeof prompt !== "string" || prompt.trim().length === 0) {
@@ -222,7 +260,11 @@ async function persistInterruptedRun(runId: string): Promise<void> {
         }),
         prisma.agentRun.update({
             where: { id: runId },
-            data: { status: "interrupted", finishedAt }
+            data: {
+                status: "interrupted",
+                finishedAt,
+                stopReason: "interrupted"
+            }
         })
     ]);
 }
@@ -297,31 +339,46 @@ export async function createRun(sessionId: string, input: unknown): Promise<Crea
                 conversation.push({ role: "user", content: userMessage.content });
             }
 
+            const toolCallBatches: Array<typeof previousRun.toolCalls> = [];
             for (const toolCall of previousRun.toolCalls) {
-                const argumentsJson = JSON.stringify(toolCall.arguments);
-                if (argumentsJson === undefined) {
-                    throw new Error(`Tool call ${toolCall.id} arguments cannot be serialized`);
+                const previousBatch = toolCallBatches[toolCallBatches.length - 1];
+                if (toolCall.modelRound > 0 &&
+                    previousBatch?.[0]?.modelRound === toolCall.modelRound) {
+                    previousBatch.push(toolCall);
+                } else {
+                    toolCallBatches.push([toolCall]);
                 }
+            }
+
+            for (const toolCallBatch of toolCallBatches) {
                 conversation.push({
                     role: "assistant",
                     content: null,
-                    tool_calls: [{
-                        id: toolCall.toolCallId,
-                        type: "function",
-                        function: {
-                            name: toolCall.toolName,
-                            arguments: argumentsJson
+                    tool_calls: toolCallBatch.map((toolCall) => {
+                        const argumentsJson = JSON.stringify(toolCall.arguments);
+                        if (argumentsJson === undefined) {
+                            throw new Error(`Tool call ${toolCall.id} arguments cannot be serialized`);
                         }
-                    }]
+                        return {
+                            id: toolCall.toolCallId,
+                            type: "function" as const,
+                            function: {
+                                name: toolCall.toolName,
+                                arguments: argumentsJson
+                            }
+                        };
+                    })
                 });
-                conversation.push({
-                    role: "tool",
-                    tool_call_id: toolCall.toolCallId,
-                    content: toToolResultMessage(
-                        toolCall.result,
-                        toolCall.errorMessage
-                    )
-                });
+                for (const toolCall of toolCallBatch) {
+                    conversation.push({
+                        role: "tool",
+                        tool_call_id: toolCall.toolCallId,
+                        content: toToolResultMessage(
+                            toolCall.result,
+                            toolCall.errorMessage
+                        )
+                    });
+                }
             }
 
             const agentMessage = previousRun.messages.find((message) => message.role === "agent");
@@ -355,6 +412,8 @@ export async function executeRun(
     }
     activeRuns.set(run.id, activeRun);
 
+    const loopState = createAgentLoopState();
+
     try {
         const scenario = run.provider === "mock"
             ? getScenario(run.prompt).scenario
@@ -382,16 +441,25 @@ export async function executeRun(
                 });
             } else if (event.type === "tool_call") {
                 nextToolCallSequence += 1;
+                const nextToolCallCount = loopState.toolCallCount + 1;
+                await prisma.$transaction([
+                    prisma.toolCall.create({
+                        data: {
+                            runId: run.id,
+                            toolCallId: event.data.toolCallId,
+                            sequence: nextToolCallSequence,
+                            modelRound: loopState.modelRounds,
+                            toolName: event.data.toolName,
+                            arguments: toPrismaJson(event.data.arguments)
+                        }
+                    }),
+                    prisma.agentRun.update({
+                        where: { id: run.id },
+                        data: { toolCallCount: nextToolCallCount }
+                    })
+                ]);
+                recordToolCallStarted(loopState);
                 toolCallSequences.set(event.data.toolCallId, nextToolCallSequence);
-                await prisma.toolCall.create({
-                    data: {
-                        runId: run.id,
-                        toolCallId: event.data.toolCallId,
-                        sequence: nextToolCallSequence,
-                        toolName: event.data.toolName,
-                        arguments: toPrismaJson(event.data.arguments)
-                    }
-                });
             } else if (event.type === "tool_result") {
                 if (!toolCallSequences.has(event.data.toolCallId)) {
                     throw new Error(`Unknown tool call: ${event.data.toolCallId}`);
@@ -414,18 +482,29 @@ export async function executeRun(
                     }
                 });
             } else if (event.type === "done") {
+                loopState.stopReason = "completed";
                 await prisma.agentRun.update({
                     where: { id: run.id },
-                    data: { status: "completed", finishedAt: new Date() }
+                    data: {
+                        status: "completed",
+                        finishedAt: new Date(),
+                        modelRounds: loopState.modelRounds,
+                        toolCallCount: loopState.toolCallCount,
+                        stopReason: loopState.stopReason
+                    }
                 });
             } else if (event.type === "error") {
+                loopState.stopReason = "error";
                 await prisma.agentRun.update({
                     where: { id: run.id },
                     data: {
                         status: "failed",
                         finishedAt: new Date(),
                         errorCode: event.data.code,
-                        errorMessage: event.data.message
+                        errorMessage: event.data.message,
+                        modelRounds: loopState.modelRounds,
+                        toolCallCount: loopState.toolCallCount,
+                        stopReason: loopState.stopReason
                     }
                 });
             }
@@ -464,19 +543,54 @@ export async function executeRun(
             { role: "user", content: run.prompt }
         ];
 
-        for (let round = 1; round <= MAX_MODEL_ROUNDS; round += 1) {
+        while (true) {
+            const roundLimit = beginModelRound(loopState);
+            if (roundLimit) {
+                loopState.stopReason = roundLimit;
+                throw createLoopLimitError(roundLimit);
+            }
+            await prisma.agentRun.update({
+                where: { id: run.id },
+                data: { modelRounds: loopState.modelRounds }
+            });
+
+            const roundTokens: string[] = [];
             const completion = await streamDeepSeekCompletion(
                 messages,
                 agentToolDefinitions,
                 activeRun.controller.signal,
                 async (token) => {
-                    await emitRunEvent({ type: "token", data: { content: token } });
+                    roundTokens.push(token);
                 }
             );
 
             if (completion.toolCalls.length === 0) {
+                for (const token of roundTokens) {
+                    await emitRunEvent({ type: "token", data: { content: token } });
+                }
                 await emitRunEvent({ type: "done" });
                 return;
+            }
+
+            const parsedToolCalls = completion.toolCalls.map((toolCall) => {
+                const parsedArguments = parseToolArguments(toolCall.rawArguments);
+                const policyCall: AgentLoopToolCall = {
+                    name: toolCall.name,
+                    arguments: parsedArguments.arguments
+                };
+                return {
+                    toolCall,
+                    parsedArguments,
+                    policyCall
+                };
+            });
+            const batchStopReason = getToolBatchStopReason(
+                loopState,
+                parsedToolCalls.map(({ policyCall }) => policyCall)
+            );
+            if (batchStopReason) {
+                loopState.stopReason = batchStopReason;
+                throw createLoopLimitError(batchStopReason);
             }
 
             const assistantToolCalls = completion.toolCalls.map((toolCall) => ({
@@ -498,8 +612,8 @@ export async function executeRun(
                 tool_call_id: string;
                 content: string;
             }> = [];
-            for (const toolCall of completion.toolCalls) {
-                const parsedArguments = parseToolArguments(toolCall.rawArguments);
+            const toolCallOutcomes: Array<AgentLoopToolCall & { success: boolean }> = [];
+            for (const { toolCall, parsedArguments, policyCall } of parsedToolCalls) {
                 const toolArguments = parsedArguments.arguments;
                 await emitRunEvent({
                     type: "tool_call",
@@ -531,6 +645,10 @@ export async function executeRun(
                     }
                 };
                 await emitRunEvent(resultEvent);
+                toolCallOutcomes.push({
+                    ...policyCall,
+                    success: execution.success
+                });
                 toolResults.push({
                     role: "tool",
                     tool_call_id: toolCall.id,
@@ -540,17 +658,12 @@ export async function executeRun(
                     )
                 });
             }
+            recordToolBatchResults(loopState, toolCallOutcomes);
             messages.push(...toolResults);
-
-            if (round === MAX_MODEL_ROUNDS) {
-                throw new DeepSeekServiceError(
-                    "AGENT_LOOP_LIMIT_REACHED",
-                    `The Agent reached the maximum of ${MAX_MODEL_ROUNDS} model rounds before completing the response.`
-                );
-            }
         }
     } catch (error) {
         if (activeRun.controller.signal.aborted) {
+            loopState.stopReason = "interrupted";
             try {
                 await persistInterruptedRun(run.id);
             } catch (persistError) {
@@ -563,6 +676,7 @@ export async function executeRun(
         const runError = error instanceof DeepSeekServiceError
             ? { code: error.code, message: error.message }
             : { code: "INTERNAL_ERROR", message: "Agent stream failed" };
+        loopState.stopReason = loopState.stopReason ?? "error";
         const finishedAt = new Date();
         await prisma.$transaction([
             prisma.toolCall.updateMany({
@@ -579,7 +693,10 @@ export async function executeRun(
                     status: "failed",
                     finishedAt,
                     errorCode: runError.code,
-                    errorMessage: runError.message
+                    errorMessage: runError.message,
+                    modelRounds: loopState.modelRounds,
+                    toolCallCount: loopState.toolCallCount,
+                    stopReason: loopState.stopReason
                 }
             })
         ]);

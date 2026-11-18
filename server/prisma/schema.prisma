@@ -47,6 +47,9 @@ model AgentRun {
   finishedAt   DateTime?      @db.DateTime(3)
   errorCode    String?        @db.VarChar(64)
   errorMessage String?        @db.Text
+  modelRounds  Int            @default(0)
+  toolCallCount Int           @default(0)
+  stopReason   String?        @db.VarChar(64)
 
   session   Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   messages  Message[]
@@ -73,6 +76,7 @@ model ToolCall {
   runId        String         @db.Char(36)
   toolCallId   String         @db.VarChar(128)
   sequence     Int
+  modelRound   Int            @default(0)
   toolName     String         @db.VarChar(128)
   status       ToolCallStatus @default(running)
   arguments    Json

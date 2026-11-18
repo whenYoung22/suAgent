@@ -1,5 +1,6 @@
 import type {
     AgentRunStatus,
+    AgentLoopStopReason,
     SessionDetail,
     SessionMessage,
     SessionSummary,
@@ -50,6 +51,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function toAgentLoopStopReason(value: string | null): AgentLoopStopReason | null {
+    switch (value) {
+        case "completed":
+        case "interrupted":
+        case "model_round_limit":
+        case "tool_call_limit":
+        case "repeated_tool_failure":
+        case "tool_recovery_limit":
+        case "error":
+            return value;
+        default:
+            return null;
+    }
+}
+
 function toSessionDetail(session: SessionWithRuns): SessionDetail {
     const messages: SessionMessage[] = [];
 
@@ -82,6 +98,7 @@ function toSessionDetail(session: SessionWithRuns): SessionDetail {
                 return {
                     toolCallId: toolCall.toolCallId,
                     toolName: toolCall.toolName,
+                    modelRound: toolCall.modelRound,
                     arguments: toolCall.arguments,
                     status: toolCall.status,
                     ...(toolCall.result === null ? {} : { result: toolCall.result }),
@@ -100,6 +117,9 @@ function toSessionDetail(session: SessionWithRuns): SessionDetail {
                 thinking: message.thinking ?? "",
                 toolCalls,
                 runStatus,
+                modelRounds: run.modelRounds,
+                toolCallCount: run.toolCallCount,
+                stopReason: toAgentLoopStopReason(run.stopReason),
                 error: run.errorCode && run.errorMessage
                     ? { code: run.errorCode, message: run.errorMessage }
                     : null,
