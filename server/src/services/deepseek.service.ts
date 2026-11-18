@@ -1,8 +1,38 @@
-import type { AgentEvent } from "@suagent/shared";
+import type { AgentToolDefinition } from "./agent-tools.service.js";
 
-export interface DeepSeekMessage {
-    role: "system" | "user" | "assistant";
+export type DeepSeekMessage =
+    | { role: "user" | "system"; content: string }
+    | {
+        role: "assistant";
+        content: string | null;
+        tool_calls?: DeepSeekToolCallMessage[];
+    }
+    | { role: "tool"; tool_call_id: string; content: string };
+
+export interface DeepSeekToolCallMessage {
+    id: string;
+    type: "function";
+    function: {
+        name: string;
+        arguments: string;
+    };
+}
+
+export interface DeepSeekToolCall {
+    id: string;
+    name: string;
+    rawArguments: string;
+}
+
+export interface DeepSeekCompletion {
     content: string;
+    toolCalls: DeepSeekToolCall[];
+}
+
+interface MutableToolCall {
+    id: string;
+    name: string;
+    arguments: string;
 }
 
 export class DeepSeekServiceError extends Error {
@@ -19,15 +49,79 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseDataFrame(data: string): {
-    content: string | null;
-    finished: boolean;
-    done: boolean;
-} {
-    if (data === "[DONE]") {
-        return { content: null, finished: true, done: true };
-    }
+async function* readDataFrames(
+    body: ReadableStream<Uint8Array>,
+    signal: AbortSignal
+): AsyncGenerator<string> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let dataLines: string[] = [];
 
+    const consumeLine = (rawLine: string): string | null => {
+        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+        if (line === "") {
+            if (dataLines.length === 0) {
+                return null;
+            }
+            const data = dataLines.join("\n");
+            dataLines = [];
+            return data;
+        }
+        if (line.startsWith(":")) {
+            return null;
+        }
+        if (line.startsWith("data:")) {
+            const value = line.slice(5);
+            dataLines.push(value.startsWith(" ") ? value.slice(1) : value);
+        }
+        return null;
+    };
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                buffer += decoder.decode();
+                break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            let newlineIndex = buffer.indexOf("\n");
+            while (newlineIndex !== -1) {
+                const data = consumeLine(buffer.slice(0, newlineIndex));
+                buffer = buffer.slice(newlineIndex + 1);
+                if (data !== null) {
+                    yield data;
+                }
+                newlineIndex = buffer.indexOf("\n");
+            }
+        }
+
+        if (buffer.length > 0) {
+            const data = consumeLine(buffer);
+            if (data !== null) {
+                yield data;
+            }
+        }
+        const finalData = consumeLine("");
+        if (finalData !== null) {
+            yield finalData;
+        }
+    } catch (error) {
+        if (signal.aborted || error instanceof DeepSeekServiceError) {
+            throw error;
+        }
+        throw new DeepSeekServiceError(
+            "DEEPSEEK_STREAM_ERROR",
+            "The DeepSeek response stream was interrupted."
+        );
+    } finally {
+        reader.releaseLock();
+    }
+}
+
+function parsePayload(data: string): Record<string, unknown> {
     let payload: unknown;
     try {
         payload = JSON.parse(data);
@@ -37,44 +131,27 @@ function parseDataFrame(data: string): {
             "DeepSeek returned an invalid streaming response."
         );
     }
-
     if (!isRecord(payload)) {
         throw new DeepSeekServiceError(
             "INVALID_UPSTREAM_RESPONSE",
             "DeepSeek returned an invalid streaming response."
         );
     }
-
     if (isRecord(payload.error)) {
         throw new DeepSeekServiceError(
             "UPSTREAM_ERROR",
             "DeepSeek returned an error while generating a response."
         );
     }
-
-    const choices = payload.choices;
-    const choice = Array.isArray(choices) ? choices[0] : undefined;
-    if (!isRecord(choice)) {
-        return { content: null, finished: false, done: false };
-    }
-
-    const delta = choice.delta;
-    const content = isRecord(delta) && typeof delta.content === "string"
-        ? delta.content
-        : null;
-
-    return {
-        content,
-        finished: choice.finish_reason !== null && choice.finish_reason !== undefined,
-        done: false
-    };
+    return payload;
 }
 
-export async function* streamDeepSeekEvents(
-    prompt: string,
-    conversation: DeepSeekMessage[],
-    signal: AbortSignal
-): AsyncGenerator<AgentEvent> {
+export async function streamDeepSeekCompletion(
+    messages: DeepSeekMessage[],
+    tools: AgentToolDefinition[],
+    signal: AbortSignal,
+    onToken: (content: string) => Promise<void>
+): Promise<DeepSeekCompletion> {
     const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
     if (!apiKey) {
         throw new DeepSeekServiceError(
@@ -94,14 +171,9 @@ export async function* streamDeepSeekEvents(
             },
             body: JSON.stringify({
                 model,
-                messages: [
-                    {
-                        role: "system",
-                        content: "请直接使用 Markdown 格式回答。不要将整段普通回答包在代码围栏中；只有实际代码片段才使用代码围栏。"
-                    },
-                    ...conversation,
-                    { role: "user", content: prompt }
-                ],
+                messages,
+                tools,
+                tool_choice: "auto",
                 stream: true
             }),
             signal
@@ -129,103 +201,95 @@ export async function* streamDeepSeekEvents(
         );
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let dataLines: string[] = [];
+    const contentParts: string[] = [];
+    const toolCalls = new Map<number, MutableToolCall>();
+    let finishReason: string | null = null;
     let receivedDone = false;
-    let receivedFinishReason = false;
 
-    const consumeLine = (rawLine: string): string | null => {
-        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-        if (line === "") {
-            if (dataLines.length === 0) {
-                return null;
+    for await (const data of readDataFrames(response.body, signal)) {
+        if (data === "[DONE]") {
+            receivedDone = true;
+            break;
+        }
+
+        const payload = parsePayload(data);
+        const choices = payload.choices;
+        const choice = Array.isArray(choices) ? choices[0] : undefined;
+        if (!isRecord(choice)) {
+            continue;
+        }
+
+        if (typeof choice.finish_reason === "string") {
+            finishReason = choice.finish_reason;
+        }
+
+        const delta = choice.delta;
+        if (!isRecord(delta)) {
+            continue;
+        }
+
+        if (typeof delta.content === "string" && delta.content.length > 0) {
+            contentParts.push(delta.content);
+            await onToken(delta.content);
+        }
+
+        if (!Array.isArray(delta.tool_calls)) {
+            continue;
+        }
+
+        for (const item of delta.tool_calls) {
+            if (!isRecord(item) || typeof item.index !== "number") {
+                throw new DeepSeekServiceError(
+                    "INVALID_TOOL_CALL",
+                    "DeepSeek returned an invalid tool call."
+                );
             }
-            const data = dataLines.join("\n");
-            dataLines = [];
-            return data;
-        }
-        if (line.startsWith(":")) {
-            return null;
-        }
-        if (line.startsWith("data:")) {
-            const value = line.slice(5);
-            dataLines.push(value.startsWith(" ") ? value.slice(1) : value);
-        }
-        return null;
-    };
 
-    try {
-        while (!receivedDone) {
-            const { done, value } = await reader.read();
-            if (done) {
-                buffer += decoder.decode();
-                break;
+            const toolCall = toolCalls.get(item.index) ?? {
+                id: "",
+                name: "",
+                arguments: ""
+            };
+            if (typeof item.id === "string") {
+                toolCall.id += item.id;
             }
-
-            buffer += decoder.decode(value, { stream: true });
-            let newlineIndex = buffer.indexOf("\n");
-            while (newlineIndex !== -1) {
-                const line = buffer.slice(0, newlineIndex);
-                buffer = buffer.slice(newlineIndex + 1);
-                const data = consumeLine(line);
-                if (data !== null) {
-                    const frame = parseDataFrame(data);
-                    receivedDone = frame.done;
-                    receivedFinishReason ||= frame.finished;
-                    if (frame.content !== null) {
-                        yield { type: "token", data: { content: frame.content } };
-                    }
+            if (isRecord(item.function)) {
+                if (typeof item.function.name === "string") {
+                    toolCall.name += item.function.name;
                 }
-                if (receivedDone) {
-                    break;
-                }
-                newlineIndex = buffer.indexOf("\n");
-            }
-        }
-
-        if (!receivedDone) {
-            if (buffer.length > 0) {
-                const data = consumeLine(buffer);
-                if (data !== null) {
-                    const frame = parseDataFrame(data);
-                    receivedDone = frame.done;
-                    receivedFinishReason ||= frame.finished;
-                    if (frame.content !== null) {
-                        yield { type: "token", data: { content: frame.content } };
-                    }
+                if (typeof item.function.arguments === "string") {
+                    toolCall.arguments += item.function.arguments;
                 }
             }
-
-            const finalData = consumeLine("");
-            if (finalData !== null) {
-                const frame = parseDataFrame(finalData);
-                receivedDone = frame.done;
-                receivedFinishReason ||= frame.finished;
-                if (frame.content !== null) {
-                    yield { type: "token", data: { content: frame.content } };
-                }
-            }
+            toolCalls.set(item.index, toolCall);
         }
-
-        if (!receivedDone && !receivedFinishReason) {
-            throw new DeepSeekServiceError(
-                "INCOMPLETE_UPSTREAM_STREAM",
-                "The DeepSeek response stream ended before generation completed."
-            );
-        }
-
-        yield { type: "done" };
-    } catch (error) {
-        if (signal.aborted || error instanceof DeepSeekServiceError) {
-            throw error;
-        }
-        throw new DeepSeekServiceError(
-            "DEEPSEEK_STREAM_ERROR",
-            "The DeepSeek response stream was interrupted."
-        );
-    } finally {
-        reader.releaseLock();
     }
+
+    if (!receivedDone && finishReason === null) {
+        throw new DeepSeekServiceError(
+            "INCOMPLETE_UPSTREAM_STREAM",
+            "The DeepSeek response stream ended before generation completed."
+        );
+    }
+
+    const orderedToolCalls = [...toolCalls.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([, toolCall]) => {
+            if (!toolCall.id || !toolCall.name) {
+                throw new DeepSeekServiceError(
+                    "INVALID_TOOL_CALL",
+                    "DeepSeek returned a tool call without an ID or function name."
+                );
+            }
+            return {
+                id: toolCall.id,
+                name: toolCall.name,
+                rawArguments: toolCall.arguments
+            };
+        });
+
+    return {
+        content: contentParts.join(""),
+        toolCalls: orderedToolCalls
+    };
 }

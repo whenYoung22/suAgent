@@ -2,7 +2,7 @@
 
 suAgent 是一个基于 React、Express 和 TypeScript 构建的 Agent 流式交互工作台，支持通过 DeepSeek 进行真实流式问答，也提供模拟工具调用场景，并支持用户随时中断流式交互。
 
-当前前端通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理运行状态与消息/工具调用数据，并通过持久化会话接口支持会话列表、历史恢复、改名和删除。通过服务端 `AGENT_PROVIDER` 选择 `mock` 或 `deepseek`；DeepSeek 模式支持自然语言流式问答，Mock 模式输入 `1`–`4` 选择预设模拟场景。当前未接入真实 Tool Calling / Agent Loop。
+当前前端通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理运行状态与消息/工具调用数据，并通过持久化会话接口支持会话列表、历史恢复、改名和删除。通过服务端 `AGENT_PROVIDER` 选择 `mock` 或 `deepseek`；DeepSeek 模式支持流式问答及最多 5 轮的 Tool Calling / Agent Loop，Mock 模式输入 `1`–`4` 选择预设模拟场景。
 
 
 
@@ -25,6 +25,7 @@ suAgent/
 │   └── src/
 │       ├── lib/              # sseSender.ts（SSE 响应生命周期与事件推送）
 │       ├── routes/           # sessions.route.ts、session-runs.route.ts
+│       ├── services/         # Agent Run、DeepSeek 与本地工具实现
 │       ├── scenarios/        # 预设事件序列：singleToolCall、multiToolCall、toolFailure、streamError
 │       ├── app.ts            # 创建 Express 应用
 │       └── server.ts         # 启动 HTTP 服务
@@ -50,6 +51,8 @@ suAgent/
 - **错误局部化**：工具调用失败时卡片内降级提示，不阻塞整个对话流
 - **持久化会话**：创建、切换、改名、删除会话；刷新后从服务端恢复消息与工具调用记录
 - **DeepSeek 流式问答**：服务端调用 DeepSeek Chat Completions API，将模型输出映射为统一 Agent SSE 事件
+- **Tool Calling / Agent Loop**：服务端白名单工具 `get_current_time`、`get_weather`；工具参数分片累积并校验，工具结果回传模型，最多进行 5 轮模型请求
+- **天气查询**：使用 Open-Meteo 地理编码 API 将地点解析为经纬度，再调用彩云天气 API 获取实况和预报；国家代码使用 ISO 3166-1 alpha-2 格式（如 `JP`），天气查询需要配置 `CAIYUN_API_TOKEN`
 - **模拟场景**：Mock 模式下输入 `1` 单次工具调用、`2` 连续工具调用、`3` 工具调用失败或 `4` 流式错误
 - **标题编辑**：client 将会话标题限制为 1–15 个字符
 
@@ -143,16 +146,16 @@ npm run dev
 
 前端默认运行在 `http://localhost:5173`，后端默认 `http://localhost:3000`。Vite 开发服务器会将 `/api` 请求代理到后端；如需跨域直连其他后端，可通过 `VITE_API_BASE_URL` 配置 API 基地址。
 
-### DeepSeek 配置
+### DeepSeek 与工具配置
 
-在 `server/.env` 中设置 `AGENT_PROVIDER="deepseek"`、`DEEPSEEK_API_KEY`，并可选设置 `DEEPSEEK_MODEL`（默认 `deepseek-chat`）。API Key 仅由服务端读取，不要放入前端环境变量。默认 `AGENT_PROVIDER="mock"`，可继续使用 `1`–`4` 演示场景。
+在 `server/.env` 中设置 `AGENT_PROVIDER="deepseek"`、`DEEPSEEK_API_KEY`，并可选设置 `DEEPSEEK_MODEL`（默认 `deepseek-chat`）。使用天气工具时还需设置 `CAIYUN_API_TOKEN`。这些凭证仅由服务端读取，不要放入前端环境变量。地点名称由 Open-Meteo 地理编码 API 转换为经纬度；天气数据由[彩云天气 API](https://open.caiyunapp.com/%E9%80%9A%E7%94%A8%E9%A2%84%E6%8A%A5%E6%8E%A5%E5%8F%A3/v2.5)提供。默认 `AGENT_PROVIDER="mock"`，可继续使用 `1`–`4` 演示场景。
 
 ## 开发阶段
 
 1. **阶段一**：Express 硬编码事件流，前端跑通 SSE 解析与最小渲染链路
 2. **阶段二**：Zustand 状态机、工具卡片、增量渲染，完成正常流程
 3. **阶段三**：`AbortController` 中断、错误降级、跨 chunk 边界处理
-4. **阶段四**：已接入 DeepSeek 流式问答，前端协议不变；Tool Calling / Agent Loop 仍是后续扩展
+4. **阶段四**：接入 DeepSeek 流式问答与服务端 Tool Calling / Agent Loop；MCP 和 LangChain / LangGraph 不在当前实现范围
 
 
 
@@ -160,7 +163,7 @@ npm run dev
 # 创建会话，从响应中取得 session.id
 curl.exe -X POST http://localhost:3000/api/sessions
 
-# 将 <sessionId> 替换为创建响应中的 id；prompt 可为 1、2、3 或 4
+# 将 <sessionId> 替换为创建响应中的 id；Mock 模式 prompt 可为 1、2、3 或 4
 curl.exe -N -X POST http://localhost:3000/api/sessions/<sessionId>/runs -H "Content-Type: application/json" -d "{\"prompt\":\"1\"}"
 ```
 

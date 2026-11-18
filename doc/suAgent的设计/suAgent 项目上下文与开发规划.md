@@ -56,13 +56,13 @@ suAgent 进一步证明具备复杂前端交互、流式数据处理和 AI 应�
 
 ---
 
-## 三、最重要的项目范围约束
+## 三、最初范围约束与当前实现状态
 
-这一部分必须严格遵守，不能在后续设计中擅自扩大项目范围。
+以下 Mock V1 约束记录项目的初始范围；之后已按计划扩展接入 DeepSeek 和本地工具。
 
-### V1 不实现真正的 Agent Loop
+### 初始 Mock 阶段不实现真正的 Agent Loop
 
-V1 后端使用 Mock Agent Runner，通过预设事件脚本模拟 Agent 执行过程。
+初始后端使用 Mock Agent Runner，通过预设事件脚本模拟 Agent 执行过程。
 
 例如：
 
@@ -82,7 +82,7 @@ done
 
 这些事件由后端预设脚本产生，并不是由真实 LLM 动态决定的。
 
-### V1 不实现真正的 Tool Calling
+### 初始 Mock 阶段不实现真正的 Tool Calling
 
 虽然 Mock 事件中存在：
 
@@ -109,18 +109,17 @@ done
 4. 将结果重新交给模型，进入下一轮。
 5. 直到模型生成最终回答或达到终止条件。
 
-suAgent V1 只是参考这些执行阶段的语义设计前端状态机。
+当前实现由服务端负责 Agent Loop 的循环调度；前端仍只负责消费 SSE 事件并展示运行状态，不参与模型和工具的调度。
 
-**前端负责展示和管理执行状态，不负责 Agent Loop 的循环调度。**
+### 当前后端能力
 
-### V1 后端定位
+在保留 Mock 场景的基础上，后端还实现：
 
-后端只需要实现：
-
-1. Express SSE 推送。
-2. 统一的 Agent Event 事件协议。
-3. Mock Agent Runner。
-4. 连接断开、请求取消及资源清理。
+1. DeepSeek 流式响应和分片 Tool Call 参数解析。
+2. `get_current_time` 与 `get_weather` 两个服务端白名单工具。
+3. 最多 5 轮模型请求的 Agent Loop；工具结果会回传模型，最终文本继续通过 SSE 推送。
+4. Open-Meteo 地理编码、彩云天气查询、参数校验、工具调用记录持久化及会话历史恢复。
+5. 连接断开和用户取消时中止模型或天气请求。
 
 ---
 
@@ -473,27 +472,25 @@ AbortController 可以用于 Fetch，也可以用于 Axios 的取消控制。
 
 ---
 
-## 六、后续可选扩展：真实接入 DeepSeek
+## 六、DeepSeek、Tool Calling 与 Agent Loop
 
-这一部分不是 V1 的必要要求。
-
-如果核心功能完成，可以在最后考虑接入 DeepSeek API。
+以下保留方案分层，说明当前实现覆盖的能力。
 
 需要区分三个层次：
 
-### 方案 A：只接入 LLM API
+### 方案 A：只接入 LLM API（已实现）
 
 调用 DeepSeek，获取模型回答，通过 SSE 推送给前端。
 
 这只是 LLM API 集成和流式对话，不算实现 Agent Loop。
 
-### 方案 B：LLM + Tool Calling
+### 方案 B：LLM + Tool Calling（已实现）
 
 模型返回工具调用请求，后端解析参数并执行对应函数。
 
 这可以称为实现了 Function Calling / Tool Calling 机制，但如果只执行一次工具调用，没有继续请求模型，不算完整的 Agent Loop。
 
-### 方案 C：LLM + Tool Calling + 循环调度
+### 方案 C：LLM + Tool Calling + 循环调度（已实现）
 
 基本逻辑：
 
@@ -520,7 +517,7 @@ while (true) {
 
 这是 Agent Loop 的基本形式。
 
-真实实现还需要处理：
+当前实现还包含：
 - 最大循环次数。
 - 工具调用失败。
 - 模型请求失败。
@@ -530,9 +527,7 @@ while (true) {
 - 工具权限和参数校验。
 - 最终回答生成。
 
-只有真正实现模型决策、工具执行、结果回传模型、继续循环的调度过程，才能说实现了 Agent Loop。
-
-**建议：先完成 V1，不要为了简历增加 Agent Loop 而牺牲前端核心功能的开发质量。**
+工具通过本地白名单执行：`get_current_time` 使用 `Asia/Shanghai` 作为默认时区；`get_weather` 先调用 Open-Meteo 地理编码 API 将地点名称解析为经纬度，再通过彩云天气 API 查询。国家代码使用 ISO 3166-1 alpha-2 格式（如 `JP`），彩云凭证通过服务端 `CAIYUN_API_TOKEN` 配置。当前没有接入 MCP、LangChain 或 LangGraph。
 
 ---
 
@@ -632,13 +627,13 @@ suAgent 的核心简历亮点应该围绕前端技术展开。
 
 ### 面试时如何介绍 Agent Loop
 
-建议使用以下表述：
+初始 Mock 阶段可以使用以下表述：
 
-“这个项目 V1 没有实现真正的 Agent Loop 调度，后端通过预设脚本模拟 Agent 的执行过程，并按照统一的事件协议通过 SSE 推送给前端。项目重点在于前端如何消费结构化事件，以及如何管理多阶段执行过程中的异步任务。
+“项目最初的 Mock 阶段没有实现真正的 Agent Loop 调度，后端通过预设脚本模拟执行过程，并按照统一的事件协议通过 SSE 推送给前端。当时的重点是前端如何消费结构化事件，以及如何管理多阶段执行过程中的异步任务。
 
-我参考 Agent Loop 的执行语义，将其抽象为 Thinking、Tool Calling、Observation 等阶段，并围绕这些阶段设计前端状态管理机制，实现工具调用可视化、运行状态管理和异常处理。”
+后续我接入了 DeepSeek Tool Calling，在服务端实现了白名单工具执行和最多 5 轮的 Agent Loop，并继续通过同一套 SSE 协议展示工具调用、结果和最终回答。”
 
-如果后续真的实现了方案 C，再补充 Agent Loop 的后端实现。
+当前已实现方案 C；讲解时应说明 Agent Loop 在服务端运行，并如实区分当前两个本地工具及其能力边界。
 
 ---
 
@@ -647,7 +642,7 @@ suAgent 的核心简历亮点应该围绕前端技术展开。
 请在后续讨论中遵循以下原则：
 
 1. 以本文档作为 suAgent 的项目背景和范围基线。
-2. 不要将 Agent Loop 或真正的 Tool Calling 默认列为 V1 已实现功能。
+2. 描述项目功能时以当前实现为准，并区分早期 Mock 场景与 DeepSeek 驱动的真实 Tool Calling。
 3. Mock tool_call/tool_result 只是事件模拟，不是真实工具调用。
 4. 优先考虑前端开发实习所需要展示的工程能力。
 5. 不要随意增加 RAG、MCP、Multi-Agent、数据库、权限系统等功能。
@@ -655,4 +650,4 @@ suAgent 的核心简历亮点应该围绕前端技术展开。
 7. 不要为了技术复杂度而过度设计，优先保证核心功能完整、代码可维护、项目可以演示。
 8. 讨论简历内容时，严格区分已经实现、正在开发和可选扩展，避免夸大项目能力。
 
-**当前最重要的任务：围绕 Mock Agent Runner + SSE 事件协议 + 前端事件驱动系统，完成 suAgent V1。**
+**当前实现基线：DeepSeek 流式问答 + 服务端白名单工具 + 有轮数上限的 Agent Loop + SSE 事件驱动前端。**
