@@ -2,7 +2,11 @@
 
 suAgent 是一个基于 React、Express 和 TypeScript 构建的 Agent 流式交互工作台，支持通过 DeepSeek 进行真实流式问答，也提供模拟工具调用场景，并支持用户随时中断流式交互。
 
-当前前端通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理运行状态与消息/工具调用数据，并通过持久化会话接口支持会话列表、历史恢复、改名和删除。通过服务端 `AGENT_PROVIDER` 选择 `mock` 或 `deepseek`；DeepSeek 模式支持流式问答及最多 5 次模型请求的 Tool Calling / Agent Loop，Mock 模式输入 `1`–`4` 选择预设模拟场景。
+当前前端通过 SSE 接收结构化 Agent 事件，使用 Zustand 管理运行状态与消息/工具调用数据，并通过持久化会话接口支持会话列表、历史恢复、改名和删除。
+
+通过服务端 `AGENT_PROVIDER` 选择 `mock` 或 `deepseek`；
+
+DeepSeek 模式支持流式问答及最多 5 次模型请求的 Tool Calling / Agent Loop，Mock 模式输入 `1`–`4` 选择预设模拟场景。
 
 
 
@@ -23,9 +27,12 @@ suAgent/
 │
 ├── server/
 │   └── src/
-│       ├── lib/              # sseSender.ts（SSE 响应生命周期与事件推送）
-│       ├── routes/           # sessions.route.ts、session-runs.route.ts
-│       ├── services/         # Agent Run、DeepSeek 与本地工具实现
+│       ├── db/               # prisma.ts（共享 Prisma 客户端）
+│       ├── http/             # sse-sender.ts（SSE 响应生命周期与事件推送）
+│       ├── routes/           # sessions.route.ts、agent-runs.route.ts
+│       ├── services/         # sessions.service.ts、agent-runs.service.ts（对外服务门面）
+│       ├── agent-runs/       # 创建/执行 Run、Agent Loop 策略、事件写入、序列化、DeepSeek 客户端
+│       ├── agent-tools/      # 工具 schema、白名单注册、参数校验与具体工具实现
 │       ├── scenarios/        # 预设事件序列：singleToolCall、multiToolCall、toolFailure、streamError
 │       ├── app.ts            # 创建 Express 应用
 │       └── server.ts         # 启动 HTTP 服务
@@ -51,7 +58,7 @@ suAgent/
 - **错误局部化**：工具调用失败时卡片内降级提示，不阻塞整个对话流
 - **持久化会话**：创建、切换、改名、删除会话；刷新后从服务端恢复消息与工具调用记录
 - **DeepSeek 流式问答**：服务端调用 DeepSeek Chat Completions API，将模型输出映射为统一 Agent SSE 事件
-- **Tool Calling / Agent Loop**：服务端白名单工具 `get_current_time`、`get_weather`；工具结果写回上下文，最多 5 次模型请求、10 次工具调用；失败允许一次修正，运行轮数、工具调用数和终止原因持久化
+- **Tool Calling / Agent Loop**：服务端白名单工具 `get_current_time`、`get_weather`；每次模型请求都会携带当前对话上下文和工具定义。工具结果写回上下文后继续请求模型；最多 5 次模型请求、10 次工具调用，失败允许一次修正，运行轮数、工具调用数和终止原因持久化
 - **天气查询**：使用 Open-Meteo 英文/拼音地理编码将地点解析为经纬度，再调用彩云天气 API 获取实况和预报；国家代码使用 ISO 3166-1 alpha-2 格式（如 `JP`），天气查询需要配置 `CAIYUN_API_TOKEN`
 - **模拟场景**：Mock 模式下输入 `1` 单次工具调用、`2` 连续工具调用、`3` 工具调用失败或 `4` 流式错误
 - **标题编辑**：client 将会话标题限制为 1–15 个字符
@@ -150,6 +157,8 @@ npm run dev
 
 在 `server/.env` 中设置 `AGENT_PROVIDER="deepseek"`、`DEEPSEEK_API_KEY`，并可选设置 `DEEPSEEK_MODEL`（默认 `deepseek-chat`）。使用天气工具时还需设置 `CAIYUN_API_TOKEN`。这些凭证仅由服务端读取，不要放入前端环境变量。地点名称由 Open-Meteo 地理编码 API 转换为经纬度；天气数据由[彩云天气 API](https://open.caiyunapp.com/%E9%80%9A%E7%94%A8%E9%A2%84%E6%8A%A5%E6%8E%A5%E5%8F%A3/v2.5)提供。默认 `AGENT_PROVIDER="mock"`，可继续使用 `1`–`4` 演示场景。
 
+DeepSeek 模式下，每轮模型请求都会携带本次运行当前累积的对话消息，以及 `agent-tools/` 注册表导出的工具定义。上下文包含系统提示词、本轮用户输入、装载的历史对话，以及本次运行中模型发出的工具调用和服务端返回的工具结果。新运行最多装载最近 10 次已完成的 DeepSeek 运行作为历史；工具结果回填后，下一轮模型请求会基于更新后的上下文继续生成或调用工具。
+
 ## 开发阶段
 
 1. **阶段一**：Express 硬编码事件流，前端跑通 SSE 解析与最小渲染链路
@@ -172,7 +181,7 @@ curl.exe -N -X POST http://localhost:3000/api/sessions/<sessionId>/runs -H "Cont
 ## 设计决策
 
 - **为什么用 SSE 而不是 WebSocket**：Agent 输出是服务端到客户端的单向事件流，SSE 基于 HTTP、实现简单、自动重连；WebSocket 适合双向实时协作（见 whenTeam 项目）
-- **为什么不用第三方 SSE 库**：手动实现帧解析是为了真正理解流式数据的边界问题（跨 chunk、不完整帧），这也是面试中最容易被追问的部分
+- **为什么不用第三方 SSE 库**：手动实现帧解析是为了真正理解流式数据的边界问题（跨 chunk、不完整帧）
 - **为什么状态机要显式定义**：非确定性事件流下，显式迁移规则能防止非法状态、保证中断后一致性、让 UI 渲染有唯一依据
 - **为什么工具失败不阻塞对话**：单次工具调用失败不应终止整个 Agent 回合，卡片级降级让 Agent 基于已有信息继续
 

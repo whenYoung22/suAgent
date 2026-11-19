@@ -1,5 +1,9 @@
-import type { AgentToolDefinition } from "./agent-tools.service.js";
+// DeepSeek API 的流式调用封装
+// 支持 SSE（Server-Sent Events）解析、工具调用（Function Calling）的增量拼接，以及完善的错误处理
 
+import type { AgentToolDefinition } from "../agent-tools/types.js";
+
+// DeepSeek wire roles; persisted session messages use `user` and `agent`.
 export type DeepSeekMessage =
     | { role: "user" | "system"; content: string }
     | {
@@ -9,7 +13,8 @@ export type DeepSeekMessage =
     }
     | { role: "tool"; tool_call_id: string; content: string };
 
-export interface DeepSeekToolCallMessage {
+// 工具调用相关类型    
+export interface DeepSeekToolCallMessage { // API 原始格式
     id: string;
     type: "function";
     function: {
@@ -18,23 +23,24 @@ export interface DeepSeekToolCallMessage {
     };
 }
 
-export interface DeepSeekToolCall {
+export interface DeepSeekToolCall { // 内部归一化格式
     id: string;
     name: string;
-    rawArguments: string;
+    rawArguments: string;  // 注意是原始 JSON 字符串，未解析
 }
 
-export interface DeepSeekCompletion {
+export interface DeepSeekCompletion { // 最终返回值
     content: string;
     toolCalls: DeepSeekToolCall[];
 }
 
-interface MutableToolCall {
+interface MutableToolCall { //流式拼接过程中使用的可变中间态
     id: string;
     name: string;
     arguments: string;
 }
 
+// 错误类型
 export class DeepSeekServiceError extends Error {
     constructor(
         readonly code: string,
@@ -45,10 +51,16 @@ export class DeepSeekServiceError extends Error {
     }
 }
 
+// 类型守卫
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// SSE 流解析  把 ReadableStream<Uint8Array> 转成 一个个完整的 data: 帧
+// 以 : 开头的是注释行（如心跳 : keep-alive），忽略。
+// 以 data: 开头的是数据行，冒号后的一个空格要去掉。
+// 一个帧可以由多行 data: 组成，用 \n 连接。
+// 空行表示帧结束
 async function* readDataFrames(
     body: ReadableStream<Uint8Array>,
     signal: AbortSignal
@@ -60,7 +72,7 @@ async function* readDataFrames(
 
     const consumeLine = (rawLine: string): string | null => {
         const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-        if (line === "") {
+        if (line === "") {   // 空行 = 帧结束
             if (dataLines.length === 0) {
                 return null;
             }
@@ -68,12 +80,12 @@ async function* readDataFrames(
             dataLines = [];
             return data;
         }
-        if (line.startsWith(":")) {
+        if (line.startsWith(":")) {  // 注释行忽略
             return null;
         }
         if (line.startsWith("data:")) {
             const value = line.slice(5);
-            dataLines.push(value.startsWith(" ") ? value.slice(1) : value);
+            dataLines.push(value.startsWith(" ") ? value.slice(1) : value);   // 去掉可选空格
         }
         return null;
     };
@@ -81,7 +93,7 @@ async function* readDataFrames(
     try {
         while (true) {
             const { done, value } = await reader.read();
-            if (done) {
+            if (done) {  // 冲刷解码器残留
                 buffer += decoder.decode();
                 break;
             }
@@ -98,29 +110,30 @@ async function* readDataFrames(
             }
         }
 
-        if (buffer.length > 0) {
+        if (buffer.length > 0) {  // 处理最后没有换行的残留行
             const data = consumeLine(buffer);
             if (data !== null) {
                 yield data;
             }
         }
-        const finalData = consumeLine("");
+        const finalData = consumeLine("");  // 用空行强制提交最后一个未闭合的帧 ；很多 SSE 实现会漏掉"最后一帧没有尾随空行"的情况，这里处理了
         if (finalData !== null) {
             yield finalData;
         }
-    } catch (error) {
+    } catch (error) { //错误转换
         if (signal.aborted || error instanceof DeepSeekServiceError) {
-            throw error;
+            throw error;  // 原样抛出
         }
         throw new DeepSeekServiceError(
             "DEEPSEEK_STREAM_ERROR",
             "The DeepSeek response stream was interrupted."
         );
     } finally {
-        reader.releaseLock();
+        reader.releaseLock();  // 确保释放流锁
     }
 }
 
+// 单帧解析 ；职责单一：解析 + 校验 + 检测上游错误；[DONE] 不在这里处理，而是在主循环里提前判断，因为它不是 JSON
 function parsePayload(data: string): Record<string, unknown> {
     let payload: unknown;
     try {
@@ -146,12 +159,14 @@ function parsePayload(data: string): Record<string, unknown> {
     return payload;
 }
 
+// 主函数
 export async function streamDeepSeekCompletion(
     messages: DeepSeekMessage[],
     tools: AgentToolDefinition[],
     signal: AbortSignal,
-    onToken: (content: string) => Promise<void>
-): Promise<DeepSeekCompletion> {
+    onToken: (content: string) => Promise<void> //是 流式回调：每收到一段文本 delta 就回调一次，用于实时推给前端/终端
+): Promise<DeepSeekCompletion> { //流结束后给出完整结果（全文 + 工具调用）
+     //配置检查
     const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
     if (!apiKey) {
         throw new DeepSeekServiceError(
@@ -163,6 +178,7 @@ export async function streamDeepSeekCompletion(
     const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat";
     let response: Response;
     try {
+        // 发起请求
         response = await fetch("https://api.deepseek.com/chat/completions", {
             method: "POST",
             headers: {
@@ -172,15 +188,16 @@ export async function streamDeepSeekCompletion(
             body: JSON.stringify({
                 model,
                 messages,
+                // 工具定义来自服务端注册表；auto 允许模型选择回答或提出一个/多个工具调用。
                 tools,
-                tool_choice: "auto",
-                stream: true
+                tool_choice: "auto", //模型自行决定是否调用工具
+                stream: true //启用 SSE
             }),
-            signal
+            signal //透传给 fetch，支持外部取消
         });
     } catch (error) {
-        if (signal.aborted) {
-            throw error;
+        if (signal.aborted) { 
+            throw error;  // 主动取消，原样抛
         }
         throw new DeepSeekServiceError(
             "DEEPSEEK_CONNECTION_ERROR",
@@ -201,6 +218,7 @@ export async function streamDeepSeekCompletion(
         );
     }
 
+    // 消费流：文本累积 + 工具调用增量拼接
     const contentParts: string[] = [];
     const toolCalls = new Map<number, MutableToolCall>();
     let finishReason: string | null = null;
@@ -228,11 +246,13 @@ export async function streamDeepSeekCompletion(
             continue;
         }
 
+        // 文本增量 ；每段 delta 追加到数组，同时 await onToken(...)
         if (typeof delta.content === "string" && delta.content.length > 0) {
             contentParts.push(delta.content);
-            await onToken(delta.content);
+            await onToken(delta.content);  //await 意味着 背压：如果下游消费慢，读流也会变慢
         }
 
+        // 工具调用增量；流式返回的工具调用是分片到达的，靠 index 标识属于同一次调用
         if (!Array.isArray(delta.tool_calls)) {
             continue;
         }
@@ -265,6 +285,7 @@ export async function streamDeepSeekCompletion(
         }
     }
 
+    //  完整性校验
     if (!receivedDone && finishReason === null) {
         throw new DeepSeekServiceError(
             "INCOMPLETE_UPSTREAM_STREAM",
@@ -272,8 +293,9 @@ export async function streamDeepSeekCompletion(
         );
     }
 
+    // 输出有序、校验后的工具调用
     const orderedToolCalls = [...toolCalls.entries()]
-        .sort(([left], [right]) => left - right)
+        .sort(([left], [right]) => left - right)   // 按 index 排序；Map 的插入顺序不一定等于 index 顺序（虽然实际通常如此），显式排序保证并行工具调用的顺序稳定
         .map(([, toolCall]) => {
             if (!toolCall.id || !toolCall.name) {
                 throw new DeepSeekServiceError(

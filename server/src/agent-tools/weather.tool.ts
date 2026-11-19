@@ -1,132 +1,43 @@
-export interface AgentToolDefinition {
-    type: "function";
+import { AgentToolError } from "./types.js";
+import type { AgentToolDefinition, AgentToolExecution } from "./types.js";
+import { getStringArgument, isRecord, validateArguments } from "./validation.js";
+
+export const weatherToolDefinition: AgentToolDefinition = {
+    type: "function",
     function: {
-        name: string;
-        description: string;
+        name: "get_weather",
+        description: "查询指定城市当前天气。",
         parameters: {
-            type: "object";
-            properties: Record<string, unknown>;
-            required?: string[];
-            additionalProperties: false;
-        };
-    };
-}
-
-export interface AgentToolExecution {
-    success: boolean;
-    result?: unknown;
-    error?: string;
-}
-
-export class AgentToolError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "AgentToolError";
-    }
-}
-
-export const agentToolDefinitions: AgentToolDefinition[] = [
-    {
-        type: "function",
-        function: {
-            name: "get_current_time",
-            description: "获取当前时间。默认使用 Asia/Shanghai 时区。",
-            parameters: {
-                type: "object",
-                properties: {
-                    timezone: {
-                        type: "string",
-                        description: "IANA 时区，例如 Asia/Shanghai；省略时使用 Asia/Shanghai。"
-                    }
+            type: "object",
+            properties: {
+                city: {
+                    type: "string",
+                    description: "城市英文名或拼音，例如 Changsha、Kunming、Tokyo；Open-Meteo 地理编码按英文名称查询。"
                 },
-                additionalProperties: false
-            }
-        }
-    },
-    {
-        type: "function",
-        function: {
-            name: "get_weather",
-            description: "查询指定城市当前天气。",
-            parameters: {
-                type: "object",
-                properties: {
-                    city: {
-                        type: "string",
-                        description: "城市英文名或拼音，例如 Changsha、Kunming、Tokyo；Open-Meteo 地理编码按英文名称查询。"
-                    },
-                    country: {
-                        type: "string",
-                        description: "可选的国家名称或 ISO 3166-1 alpha-2 两位国家代码（例如 Japan 或 JP；不要使用 JPN 这样的三位代码），用于区分同名城市。"
-                    },
-                    region: {
-                        type: "string",
-                        description: "可选的英文省份、州或行政区名称，例如 Hunan，用于区分同名地点。"
-                    }
+                country: {
+                    type: "string",
+                    description: "可选的国家名称或 ISO 3166-1 alpha-2 两位国家代码（例如 Japan 或 JP；不要使用 JPN 这样的三位代码），用于区分同名城市。"
                 },
-                required: ["city"],
-                additionalProperties: false
-            }
+                region: {
+                    type: "string",
+                    description: "可选的英文省份、州或行政区名称，例如 Hunan，用于区分同名地点。"
+                }
+            },
+            required: ["city"],
+            additionalProperties: false
         }
     }
-];
+};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function getStringArgument(
-    args: Record<string, unknown>,
-    name: string,
-    required: boolean
-): string | undefined {
-    const value = args[name];
-    if (value === undefined && !required) {
-        return undefined;
-    }
-    if (typeof value !== "string" || value.trim().length === 0) {
-        throw new AgentToolError(`Tool argument "${name}" must be a non-empty string.`);
-    }
-    return value.trim();
-}
-
-function validateArguments(
-    args: unknown,
-    allowedKeys: string[]
-): Record<string, unknown> {
-    if (!isRecord(args)) {
-        throw new AgentToolError("Tool arguments must be a JSON object.");
-    }
-    const unexpectedKey = Object.keys(args).find((key) => !allowedKeys.includes(key));
-    if (unexpectedKey) {
-        throw new AgentToolError(`Unexpected tool argument "${unexpectedKey}".`);
-    }
-    return args;
-}
-
-function getCurrentTime(args: unknown): AgentToolExecution {
-    const record = validateArguments(args, ["timezone"]);
-    const timezone = getStringArgument(record, "timezone", false) ?? "Asia/Shanghai";
-    try {
-        const now = new Date();
-        return {
-            success: true,
-            result: {
-                timezone,
-                iso: now.toISOString(),
-                localTime: new Intl.DateTimeFormat("zh-CN", {
-                    dateStyle: "full",
-                    timeStyle: "long",
-                    timeZone: timezone
-                }).format(now)
-            }
-        };
-    } catch (error) {
-        if (error instanceof RangeError) {
-            throw new AgentToolError("The timezone must be a valid IANA timezone.");
-        }
-        throw error;
-    }
+interface GeocodedLocation {
+    name: string;
+    latitude: number;
+    longitude: number;
+    country?: string;
+    countryCode?: string;
+    admin1?: string;
+    admin2?: string;
+    featureCode?: string;
 }
 
 async function fetchJson(
@@ -153,17 +64,6 @@ async function fetchJson(
     } catch {
         throw new AgentToolError(`${serviceName} returned an invalid response.`);
     }
-}
-
-interface GeocodedLocation {
-    name: string;
-    latitude: number;
-    longitude: number;
-    country?: string;
-    countryCode?: string;
-    admin1?: string;
-    admin2?: string;
-    featureCode?: string;
 }
 
 function toGeocodedLocation(value: unknown): GeocodedLocation | undefined {
@@ -378,7 +278,7 @@ function selectGeocodedLocation(
     return preferredResults[0];
 }
 
-async function getWeather(
+export async function executeWeatherTool(
     args: unknown,
     signal: AbortSignal
 ): Promise<AgentToolExecution> {
@@ -498,28 +398,4 @@ async function getWeather(
             ...(alerts.length > 0 ? { alerts } : {})
         }
     };
-}
-
-export async function executeAgentTool(
-    name: string,
-    args: unknown,
-    signal: AbortSignal
-): Promise<AgentToolExecution> {
-    try {
-        if (name === "get_current_time") {
-            return getCurrentTime(args);
-        }
-        if (name === "get_weather") {
-            return await getWeather(args, signal);
-        }
-        throw new AgentToolError(`Unknown tool "${name}".`);
-    } catch (error) {
-        if (signal.aborted) {
-            throw error;
-        }
-        if (error instanceof AgentToolError) {
-            return { success: false, error: error.message };
-        }
-        throw error;
-    }
 }

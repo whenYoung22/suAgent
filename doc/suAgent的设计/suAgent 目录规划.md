@@ -21,7 +21,8 @@ suAgent/
 │
 ├── server/
 │   └── src/
-│       ├── lib/              # sseSender.ts（SSE 响应生命周期与事件推送）
+│       ├── db/               # prisma.ts（共享 Prisma 客户端）
+│       ├── http/             # sse.ts（SSE 响应生命周期与事件推送）
 │       ├── routes/           # agent.ts（/api/agent/stream）
 │       ├── scenarios/        # 预设事件序列：singleToolCall、multiToolCall、toolFailure、streamError
 │       ├── app.ts            # 创建 Express 应用
@@ -46,7 +47,7 @@ suAgent/
 
 ## 一个建议
 
-**whenTeam 的 `server/src/lib/` 放的是 Prisma Client 这类共享实例，suAgent 的 `lib/` 放 `sseSender.ts`（事件格式化 + 推送封装）。** 命名一样，职责不同，但都是“被多处引用的基础工具”，这个习惯可以延续。
+当前实现将数据库客户端放在 `server/src/db/prisma.ts`，将 SSE 传输辅助放在 `server/src/http/sse-sender.ts`，按基础设施职责分开目录。
 
 另外，你 whenTeam 里 `client` 有 `service/`（封装 axios 实例），suAgent 不需要——因为 SSE 用 `fetch` 且只调一个接口，`api/agentStream.ts` 一个文件就够，不需要单独的 axios 实例封装层。**该省的分层要省，否则目录会显得臃肿。**
 
