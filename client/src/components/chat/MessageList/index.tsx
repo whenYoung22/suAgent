@@ -1,16 +1,20 @@
 import { Spin, Typography } from "antd";
-import type { ChatMessage } from "../../../clientTypes/agent";
+import type { ChatMessage, RunStatus } from "../../../clientTypes/agent";
 import { MessageItem } from "../MessageItem";
 import "./index.css";
 
 interface MessageListProps {
   messages: ChatMessage[];
+  runStatus: RunStatus;
+  activeAgentMessageId: string | null;
   runError: string | null;
   loading?: boolean;
 }
 
 export function MessageList({
   messages,
+  runStatus,
+  activeAgentMessageId,
   runError,
   loading = false,
 }: MessageListProps) {
@@ -23,7 +27,7 @@ export function MessageList({
     >
       {loading ? (
         <div className="message-list-loading">
-          <Spin tip="正在加载会话…" />
+          <Spin description="正在加载会话…" />
         </div>
       ) : messages.length === 0 ? (
         <div className="empty-state">
@@ -40,9 +44,25 @@ export function MessageList({
           </div>
         </div>
       ) : (
-        messages.map((message) => (
-          <MessageItem key={message.id} message={message} />
-        ))
+        messages.map((message) => {
+          const hasRunningTool = message.toolCalls.some(
+            (tool) => tool.status === 'running',
+          )
+          const isWaitingForResponse =
+            message.id === activeAgentMessageId &&
+            runStatus === 'thinking' &&
+            !message.content &&
+            !message.thinking &&
+            !hasRunningTool
+
+          return (
+            <MessageItem
+              key={message.id}
+              message={message}
+              isWaitingForResponse={isWaitingForResponse}
+            />
+          )
+        })
       )}
       {runError && (
         <div className="run-error" role="alert">

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+
 import type { SessionSummary } from '@suagent/shared/session'
 import {
   createSession as createSessionRequest,
@@ -7,6 +8,7 @@ import {
   listSessions,
   updateSessionTitle,
 } from '../api/sessions'
+
 import { useAgentStore } from './agentStore'
 
 interface SessionState {

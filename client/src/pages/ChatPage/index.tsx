@@ -1,35 +1,55 @@
+//ChatPage 负责取状态、组织页面并把数据传给组件；消息和工具卡片的具体 UI 更新发生在 MessageList、MessageItem 等子组件里
+
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Drawer, Typography } from 'antd'
+
 import { ChatComposer } from '../../components/chat/ChatComposer'
 import { MessageList } from '../../components/chat/MessageList'
 import { SessionSidebar } from '../../components/sessions/SessionSidebar'
+
 import { useAgentStream } from '../../hooks/useAgentStream'
+
 import { useAgentStore } from '../../stores/agentStore'
 import { useSessionStore } from '../../stores/sessionStore'
+
 import './index.css'
 
 function ChatPage() {
   const [prompt, setPrompt] = useState('')
+
   const [isSessionDrawerOpen, setIsSessionDrawerOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+
   const { start, stop, isRunning } = useAgentStream()
+
   const messages = useAgentStore((state) => state.messages)
+  const runStatus = useAgentStore((state) => state.runStatus)
+
+  const activeAgentMessageId = useAgentStore(
+    (state) => state.activeAgentMessageId,
+  )
   const runError = useAgentStore((state) => state.runError)
+
   const sessions = useSessionStore((state) => state.sessions)
   const currentSessionId = useSessionStore((state) => state.currentSessionId)
+
   const isLoadingSessions = useSessionStore((state) => state.isLoadingSessions)
   const isLoadingSession = useSessionStore((state) => state.isLoadingSession)
   const isMutating = useSessionStore((state) => state.isMutating)
   const sessionError = useSessionStore((state) => state.error)
+
   const initialize = useSessionStore((state) => state.initialize)
   const selectSession = useSessionStore((state) => state.selectSession)
+
   const startNewChat = useSessionStore((state) => state.startNewChat)
   const createSessionForPrompt = useSessionStore(
     (state) => state.createSessionForPrompt,
   )
   const renameSession = useSessionStore((state) => state.renameSession)
   const deleteSession = useSessionStore((state) => state.deleteSession)
+
   const clearError = useSessionStore((state) => state.clearError)
+
   const chatContentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -98,9 +118,8 @@ function ChatPage() {
                   className="session-error"
                   type="error"
                   showIcon
-                  closable
-                  message={sessionError}
-                  onClose={clearError}
+                  closable={{ onClose: clearError }}
+                  title={sessionError}
                 />
               )}
               {runError && (
@@ -108,11 +127,13 @@ function ChatPage() {
                   className="session-error"
                   type="error"
                   showIcon
-                  message={runError}
+                  title={runError}
                 />
               )}
               <MessageList
                 messages={messages}
+                runStatus={runStatus}
+                activeAgentMessageId={activeAgentMessageId}
                 runError={null}
                 loading={isLoadingSession}
               />
@@ -137,7 +158,7 @@ function ChatPage() {
         className="mobile-session-drawer"
         title="会话"
         placement="left"
-        width={300}
+        size={300}
         open={isSessionDrawerOpen}
         onClose={() => setIsSessionDrawerOpen(false)}
         destroyOnHidden

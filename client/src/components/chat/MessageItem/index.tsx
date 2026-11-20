@@ -2,7 +2,7 @@ import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '../../../clientTypes/agent'
-import { Avatar } from 'antd'
+import { Avatar, Spin } from 'antd'
 import { ToolCallCard } from '../ToolCallCard'
 import './index.css'
 
@@ -10,9 +10,13 @@ const remarkPlugins = [remarkGfm]
 
 interface MessageItemProps {
   message: ChatMessage
+  isWaitingForResponse?: boolean
 }
 
-export const MessageItem = memo(function MessageItem({ message }: MessageItemProps) {
+export const MessageItem = memo(function MessageItem({
+  message,
+  isWaitingForResponse = false,
+}: MessageItemProps) {
   return (
     <article className={`message message-${message.role}`}>
       {message.role === 'user' && (
@@ -27,6 +31,12 @@ export const MessageItem = memo(function MessageItem({ message }: MessageItemPro
             <ReactMarkdown remarkPlugins={remarkPlugins}>
               {message.content}
             </ReactMarkdown>
+          </div>
+        )}
+        {isWaitingForResponse && (
+          <div className="thinking-indicator" role="status">
+            <Spin size="small" />
+            <span>思考中…</span>
           </div>
         )}
         {message.thinking && (

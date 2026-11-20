@@ -3,13 +3,9 @@
 // 维护一份 messages 列表 + 一个运行状态机(runStatus)；handleEvent 把 AgentEvent 逐条“折叠”进当前 agent 消息；
 // beginRun / interruptRun / failRun 管理一次运行的开始与两种非正常收尾
 
-
 import { create } from 'zustand'
 import type { AgentEvent } from '@suagent/shared'
-import type {
-  SessionMessage,
-  SessionToolCall,
-} from '@suagent/shared/session'
+import type { SessionMessage, SessionToolCall } from '@suagent/shared/session'
 import { toToolCallStatus } from '../clientTypes/agent'
 import type { ChatMessage, RunStatus } from '../clientTypes/agent'
 
@@ -94,11 +90,13 @@ function toRunStatus(status: NonNullable<ChatMessage['runStatus']>): RunStatus {
 
 
 export const useAgentStore = create<AgentState>((set, get) => ({
-  runStatus: 'idle',
-  runError: null,
-  messages: [],
-  activeAgentMessageId: null,
+  runStatus: 'idle',  //当前整体运行状态，如 idle、thinking、calling_tool、done、error、interrupted
+  runError: null,  //运行期间需要在页面上展示的错误
+  messages: [],  //当前会话展示的用户和 Agent 消息，包括正文、思考文本、工具调用和错误信息
+  activeAgentMessageId: null,  //正在接收事件的 Agent 消息 ID
 
+
+  //将服务端的会话消息转换为前端使用的 ChatMessage ，包括工具状态和运行元数据
   loadSessionMessages: (sessionMessages) => {
     const messages = sessionMessages.map(toChatMessage)
     const latestAgent = [...messages].reverse().find((message) => message.role === 'agent')
@@ -110,6 +108,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     })
   },
 
+  //在切换或新建会话时清空消息和运行状态
   clearSession: () => {
     set({
       messages: [],
@@ -128,7 +127,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       return {
         messages: state.messages.map((message, index) =>
           message.id === activeAgentMessageId ||
-          (index === activeAgentIndex - 1 && message.role === 'user')
+            (index === activeAgentIndex - 1 && message.role === 'user')
             ? { ...message, runId }
             : message,
         ),
@@ -171,17 +170,17 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           messages: state.messages.map((message) =>
             message.id === activeAgentMessageId
               ? {
-                  ...message,
-                  toolCalls: [
-                    ...message.toolCalls,
-                    {
-                      toolCallId: event.data.toolCallId,
-                      toolName: event.data.toolName,
-                      arguments: event.data.arguments,
-                      status: 'running',
-                    },
-                  ],
-                }
+                ...message,
+                toolCalls: [
+                  ...message.toolCalls,
+                  {
+                    toolCallId: event.data.toolCallId,
+                    toolName: event.data.toolName,
+                    arguments: event.data.arguments,
+                    status: 'running',
+                  },
+                ],
+              }
               : message,
           ),
         }))
@@ -192,18 +191,18 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           messages: state.messages.map((message) =>
             message.id === activeAgentMessageId
               ? {
-                  ...message,
-                  toolCalls: message.toolCalls.map((tool) =>
-                    tool.toolCallId === event.data.toolCallId
-                      ? {
-                          ...tool,
-                          status: event.data.success ? 'success' : 'error',
-                          result: event.data.result,
-                          error: event.data.error,
-                        }
-                      : tool,
-                  ),
-                }
+                ...message,
+                toolCalls: message.toolCalls.map((tool) =>
+                  tool.toolCallId === event.data.toolCallId
+                    ? {
+                      ...tool,
+                      status: event.data.success ? 'success' : 'error',
+                      result: event.data.result,
+                      error: event.data.error,
+                    }
+                    : tool,
+                ),
+              }
               : message,
           ),
         }))
@@ -236,10 +235,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           messages: state.messages.map((message) =>
             message.id === activeAgentMessageId
               ? {
-                  ...message,
-                  runStatus: 'failed',
-                  error: { code: event.data.code, message: event.data.message },
-                }
+                ...message,
+                runStatus: 'failed',
+                error: { code: event.data.code, message: event.data.message },
+              }
               : message,
           ),
         }))
@@ -272,10 +271,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       messages: state.messages.map((item) =>
         item.id === activeAgentMessageId
           ? {
-              ...item,
-              runStatus: 'failed',
-              error: { code: 'CLIENT_ERROR', message },
-            }
+            ...item,
+            runStatus: 'failed',
+            error: { code: 'CLIENT_ERROR', message },
+          }
           : item,
       ),
     }))

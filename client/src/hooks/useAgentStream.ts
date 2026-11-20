@@ -2,31 +2,41 @@
 // 对外暴露 start / stop / isRunning,让组件只需调用即可 ； 核心要解决三件事:并发保护、取消语义、异常状态归类
 
 import { useCallback, useRef, useState } from 'react'
+
 import { runSession } from '../api/agentStream'
 import { cancelSessionRun } from '../api/sessions'
+
 import { useAgentStore } from '../stores/agentStore'
 import { useSessionStore } from '../stores/sessionStore'
 
 export function useAgentStream() {
   const controllerRef = useRef<AbortController | null>(null)
+
   const activeRunRef = useRef<{
     sessionId: string
     runId: string | null
   } | null>(null)
+
   const cancelPromiseRef = useRef<Promise<void> | null>(null)
   const [isStopping, setIsStopping] = useState(false)
 
   const beginRun = useAgentStore((state) => state.beginRun)
+
   const handleEvent = useAgentStore((state) => state.handleEvent)
+
   const interruptRun = useAgentStore((state) => state.interruptRun)
   const failRun = useAgentStore((state) => state.failRun)
+
   const setActiveRunId = useAgentStore((state) => state.setActiveRunId)
+
   const refreshSession = useSessionStore((state) => state.refreshSession)
   const setSessionError = useSessionStore((state) => state.setError)
+
   const isRunningInStore = useAgentStore(
     (state) =>
       state.runStatus === 'thinking' || state.runStatus === 'calling_tool',
   )
+  
   const isRunning = isRunningInStore || isStopping
 
   // 发起一次运行
